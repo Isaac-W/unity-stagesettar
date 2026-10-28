@@ -138,8 +138,9 @@ namespace StageSettAR
         public UnityEvent<LocalizerState> onStateChanged = new UnityEvent<LocalizerState>();
 
         public LocalizerState State { get; private set; }
-        /// <summary>The alignment the map root is gliding to (map to tracking space). Invalid until localized.</summary>
-        public Alignment CurrentAlignment => _target;
+        /// <summary>The alignment the map root is gliding to (map to tracking space). Invalid until localized, and again
+        /// after a tracking reset until the next fix, since the old one no longer describes the tracking space.</summary>
+        public Alignment CurrentAlignment => _placed ? _target : default;
         /// <summary>Confidence of the last accepted fix.</summary>
         public float LastConfidence { get; private set; }
 
