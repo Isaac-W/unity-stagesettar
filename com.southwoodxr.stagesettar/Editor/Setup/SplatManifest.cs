@@ -78,7 +78,10 @@ namespace StageSettAR.Editor
             var sb = new StringBuilder();
             Write(sb, root, 0);
             sb.Append('\n');
-            File.WriteAllText(ManifestFile, sb.ToString(), new UTF8Encoding(false));
+            // Written beside it and swapped in, so a failure part way through cannot leave a truncated manifest.
+            var temp = ManifestFile + ".tmp";
+            File.WriteAllText(temp, sb.ToString(), new UTF8Encoding(false));
+            File.Replace(temp, ManifestFile, null);
             return true;
         }
 
