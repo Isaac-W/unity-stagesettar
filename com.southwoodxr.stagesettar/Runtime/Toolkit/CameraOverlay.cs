@@ -242,16 +242,19 @@ namespace StageSettAR
                 return true;
             }
 
-            Shader shader = overlayShader != null ? overlayShader : Resources.Load<Shader>(ShaderResource);
-            if (shader == null)
+            // The quad goes when its camera is destroyed, but the material is ours: reuse it rather than leak one per camera.
+            if (material == null)
             {
-                Debug.LogError($"[{GetType().Name}] {name}: the overlay shader is missing. Assign " +
-                               "Overlay Shader to StageSettAR/CameraOverlay.", this);
-                enabled = false;
-                return false;
+                Shader shader = overlayShader != null ? overlayShader : Resources.Load<Shader>(ShaderResource);
+                if (shader == null)
+                {
+                    Debug.LogError($"[{GetType().Name}] {name}: the overlay shader is missing. Assign " +
+                                   "Overlay Shader to StageSettAR/CameraOverlay.", this);
+                    enabled = false;
+                    return false;
+                }
+                material = new Material(shader) { name = "CameraOverlay (runtime)" };
             }
-
-            material = new Material(shader) { name = "CameraOverlay (runtime)" };
 
             var go = new GameObject($"{GetType().Name} Overlay")
             {
