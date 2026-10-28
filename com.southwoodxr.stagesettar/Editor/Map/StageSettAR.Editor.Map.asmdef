@@ -1,0 +1,34 @@
+{
+    "name": "StageSettAR.Editor.Map",
+    "rootNamespace": "StageSettAR.Editor",
+    "references": [
+        "StageSettAR",
+        "StageSettAR.Splats",
+        "StageSettAR.Editor",
+        "StageSettAR.Editor.Splats",
+        "Gsplat",
+        "Gsplat.Editor",
+        "Unity.InferenceEngine",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "STAGESETTAR_GSPLAT"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.arloopa.unitysplats",
+            "expression": "0.0.0",
+            "define": "STAGESETTAR_GSPLAT"
+        }
+    ],
+    "noEngineReferences": false
+}

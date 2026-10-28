@@ -1,0 +1,15 @@
+{
+  "name": "com.southwoodxr.stagesettar",
+  "version": "1.0.0",
+  "displayName": "StageSettAR",
+  "description": "Import a STAR map exported from star-mobile (model, landmarks, optional Gaussian splat) and localize an AR Foundation camera against it. The map root is placed into tracking space by fusing per-frame STAR poses with the headset's own tracking: one-shot, periodic or continuous, with an optional look-around initialization and a not-in-this-room failure.",
+  "unity": "6000.3",
+  "dependencies": {
+    "com.unity.ai.inference": "2.6.1",
+    "com.unity.render-pipelines.universal": "17.3.0"
+  },
+  "keywords": ["localization", "relocalization", "ar", "star", "gaussian-splatting"],
+  "author": {
+    "name": "SouthwoodXR"
+  }
+}

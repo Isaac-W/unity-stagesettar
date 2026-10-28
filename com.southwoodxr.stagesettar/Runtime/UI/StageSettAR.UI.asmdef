@@ -1,0 +1,26 @@
+{
+    "name": "StageSettAR.UI",
+    "rootNamespace": "StageSettAR",
+    "references": [
+        "StageSettAR",
+        "Unity.TextMeshPro",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "STAGESETTAR_UGUI"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.0.0",
+            "define": "STAGESETTAR_UGUI"
+        }
+    ],
+    "noEngineReferences": false
+}

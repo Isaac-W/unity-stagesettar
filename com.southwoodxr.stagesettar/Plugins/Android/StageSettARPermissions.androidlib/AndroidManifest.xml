@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Merged into the player manifest as an Android library, so it adds the
+    permissions without replacing the main manifest the XR packages patch.
+    ArFoundationCameraSource also requests both permissions at runtime;
+    the manifest declaration alone is not enough.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          package="com.southwoodxr.stagesettar.permissions">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Horizon OS gate on headset (passthrough) camera access. -->
+    <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+
+    <!-- Without this, Android infers required="true" from the CAMERA permission
+         and stores filter out devices lacking a camera2 implementation. -->
+    <uses-feature android:name="android.hardware.camera2" android:required="false" />
+
+</manifest>

@@ -1,0 +1,40 @@
+{
+    "name": "StageSettAR.Editor.Rig",
+    "rootNamespace": "StageSettAR.Editor",
+    "references": [
+        "StageSettAR",
+        "StageSettAR.Editor",
+        "StageSettAR.ArFoundation",
+        "Unity.XR.CoreUtils",
+        "Unity.XR.CoreUtils.Editor",
+        "Unity.XR.ARFoundation",
+        "Unity.XR.ARSubsystems",
+        "Unity.XR.Interaction.Toolkit",
+        "Unity.RenderPipelines.Core.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "STAGESETTAR_ARFOUNDATION",
+        "STAGESETTAR_XRI"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.xr.arfoundation",
+            "expression": "6.0.0",
+            "define": "STAGESETTAR_ARFOUNDATION"
+        },
+        {
+            "name": "com.unity.xr.interaction.toolkit",
+            "expression": "3.0.0",
+            "define": "STAGESETTAR_XRI"
+        }
+    ],
+    "noEngineReferences": false
+}

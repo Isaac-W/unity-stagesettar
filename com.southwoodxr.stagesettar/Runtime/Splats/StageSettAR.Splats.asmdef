@@ -1,0 +1,27 @@
+{
+    "name": "StageSettAR.Splats",
+    "rootNamespace": "StageSettAR",
+    "references": [
+        "Gsplat",
+        "Unity.Mathematics",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "STAGESETTAR_GSPLAT"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.arloopa.unitysplats",
+            "expression": "0.0.0",
+            "define": "STAGESETTAR_GSPLAT"
+        }
+    ],
+    "noEngineReferences": false
+}

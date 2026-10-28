@@ -1,0 +1,28 @@
+{
+    "name": "StageSettAR.Editor.Quest",
+    "rootNamespace": "StageSettAR.Editor",
+    "references": [
+        "StageSettAR.Editor",
+        "Unity.XR.OpenXR",
+        "Unity.XR.MetaOpenXR"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "STAGESETTAR_METAOPENXR"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.xr.meta-openxr",
+            "expression": "2.4.0",
+            "define": "STAGESETTAR_METAOPENXR"
+        }
+    ],
+    "noEngineReferences": false
+}

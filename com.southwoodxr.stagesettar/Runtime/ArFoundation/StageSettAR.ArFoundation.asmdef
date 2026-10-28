@@ -1,0 +1,28 @@
+{
+    "name": "StageSettAR.ArFoundation",
+    "rootNamespace": "StageSettAR",
+    "references": [
+        "StageSettAR",
+        "Unity.XR.ARFoundation",
+        "Unity.XR.ARSubsystems",
+        "Unity.XR.CoreUtils",
+        "Unity.Collections"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "STAGESETTAR_ARFOUNDATION"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.xr.arfoundation",
+            "expression": "6.0.0",
+            "define": "STAGESETTAR_ARFOUNDATION"
+        }
+    ],
+    "noEngineReferences": false
+}

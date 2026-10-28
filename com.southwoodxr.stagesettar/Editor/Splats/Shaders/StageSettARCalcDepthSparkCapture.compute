@@ -1,0 +1,43 @@
+// Capture variant of UnitySplats' CalcDepthSpark.compute, used only while baking splat shells.
+//
+// A copy of UnitySplats 2.0.0's kernel with the sort key changed from planar view depth to radial
+// distance. Always radial: this asset exists only to be swapped in by SplatCaptureSwap for the
+// length of a bake, so there is no keyword to toggle. Re-diff against upstream after upgrading.
+//
+// Sorting normally keys on planar view depth, which is what a single perspective view wants. It
+// is wrong for capturing a panorama out of six cube faces: each face sorts along its own axis,
+// and at a shared edge -- 45 degrees off both -- z = r*cos(theta) genuinely reorders splats, so
+// order-dependent premultiplied blending composites the same direction to different colours on
+// either side of the seam. Radial distance depends only on where the camera is, never on where it
+// points, so every face receives one identical global order and the seams vanish.
+//
+// Negated because the sort ascends and the planar key is negative in front of the camera, so
+// back-to-front means most-negative first either way.
+
+#define GROUP_SIZE 256
+
+#pragma kernel CalcDepthSpark
+
+#define GSPLAT_SKINNING_POSITION_ONLY
+#include "Packages/com.arloopa.unitysplats/Runtime/Shaders/GsplatSkinning.hlsl"
+
+uint _SplatCount;
+float4x4 _MatrixMV;
+StructuredBuffer<uint4> _PackedSplatsBuffer;
+StructuredBuffer<uint> _OrderBuffer;
+RWStructuredBuffer<float> _DepthBuffer;
+
+[numthreads(GROUP_SIZE,1,1)]
+void CalcDepthSpark(uint3 id : SV_DispatchThreadID)
+{
+    uint idx = id.x;
+    if (idx >= _SplatCount)
+        return;
+
+    uint sourceId = _OrderBuffer[idx];
+    uint4 word = _PackedSplatsBuffer[sourceId];
+    float3 pos = float3(f16tof32(word.y & 0xffffu), f16tof32((word.y >> 16u) & 0xffffu), f16tof32(word.z & 0xffffu));
+    GsplatApplySkinningPosition(sourceId, pos);
+    pos = mul(_MatrixMV, float4(pos.xyz, 1)).xyz;
+    _DepthBuffer[idx] = -length(pos);
+}
