@@ -188,6 +188,7 @@ namespace StageSettAR
         const int MaxCandidates = 32, RejectsToReseed = 3;
 
         StarDetector _detector;
+        StarMap _detectorMap; // the map _detector was built for: its network, input size and landmark count
         AlignmentSolver _solver;
         SessionScaleEstimator _scale;
         StarMap _scaleMap;   // the map _scale was learned on
@@ -299,7 +300,18 @@ namespace StageSettAR
                     p3 = new Vector3d[map.LandmarkCount], p2 = new Vector2d[map.LandmarkCount], score = new double[map.LandmarkCount],
                 };
 
-                _detector ??= new StarDetector(map, advanced.backend);
+                if (_detector != null && _detectorMap != map)
+                {
+                    // Safe while a cancelled run's detection is still in flight: freeing waits for it to end.
+                    _detector.Dispose();
+                    _detector = null;
+                }
+                if (_detector == null)
+                {
+                    _detector = new StarDetector(map, advanced.backend);
+                    _detectorMap = map;
+                    _warmed = false;
+                }
                 while (_detector.Busy) await Awaitable.NextFrameAsync(ct);
                 if (!_warmed) { _warmed = true; await _detector.WarmupAsync(); }
                 _lastId = 0;
