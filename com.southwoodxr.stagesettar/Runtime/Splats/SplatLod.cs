@@ -186,7 +186,10 @@ namespace StageSettAR
             if (!renderer || !renderer.GsplatAsset)
                 return;
 
-            if (m_applied && (renderer.GsplatAsset != m_appliedAsset || !renderer.HasActiveRanges))
+            // A refresh has run on this asset, whether or not it thinned anything. One that kept every splat must
+            // still be redone when the centre moves, or the splats never thin once it does.
+            bool evaluated = m_appliedAsset != null;
+            if (evaluated && (renderer.GsplatAsset != m_appliedAsset || (m_applied && !renderer.HasActiveRanges)))
             {
                 // The renderer reloaded its asset or someone else cleared the ranges.
                 m_applied = false;
@@ -196,9 +199,9 @@ namespace StageSettAR
             var center = Center ? Center : transform;
             bool moved = (center.position - m_appliedCenter).sqrMagnitude > RefreshDistance * RefreshDistance ||
                          MatrixMoved(renderer.transform.localToWorldMatrix);
-            if (!m_dirty && !(moved && m_applied))
+            if (!m_dirty && !(moved && evaluated))
                 return;
-            if (Time.realtimeSinceStartup - m_lastRefreshTime < MinRefreshSeconds && m_applied && !m_dirty)
+            if (Time.realtimeSinceStartup - m_lastRefreshTime < MinRefreshSeconds && evaluated && !m_dirty)
                 return;
 
             Refresh();
