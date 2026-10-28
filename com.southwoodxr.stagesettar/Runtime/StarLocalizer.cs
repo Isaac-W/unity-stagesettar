@@ -43,7 +43,7 @@ namespace StageSettAR
             public float maxInferenceHz = 4f;
             [Tooltip("Give up ('not in this room') if the room is not found within this many seconds of starting. Default 25: long enough to look all around once or twice.")]
             public float failAfterSeconds = 25f;
-            [Tooltip("The room counts as lost after this many seconds without a good fix. Default 15: shorter hiccups (looking at the floor, a dark moment) should not make the map disappear.")]
+            [Tooltip("The room counts as lost after this many seconds without a good fix. Default 15: shorter hiccups (looking at the floor, a dark moment) should not make the map disappear. In Periodic mode only the time spent in bursts counts.")]
             public float lostAfterSeconds = 15f;
             [Tooltip("Seconds over which a corrected map position is slid into place. Default 0.5: quick enough to follow, slow enough that nobody sees a jump.")]
             public float glideSeconds = 0.5f;
@@ -201,8 +201,8 @@ namespace StageSettAR
         readonly List<Candidate> _cands = new List<Candidate>();
         readonly List<GameObject> _hidden = new List<GameObject>();
         long _lastId;
-        double _nextInfer, _initStart, _lastFix, _nextBurst, _burstEnd;
-        bool _burst, _hasLastPos;
+        double _nextInfer, _initStart, _lastFix, _nextBurst, _burstEnd, _idleSince;
+        bool _burst, _hasLastPos, _resume;
         Vector3 _lastPos;
         int _rejects, _initFixes;
         Alignment _lastReject;
@@ -216,7 +216,26 @@ namespace StageSettAR
 
         void Start() { if (autoStart) StartLocalization(); }
 
-        void OnDisable() => StopLocalization();
+        // OnDisable stops the loop; carry on from where it was. A found alignment keeps being tracked rather than
+        // searched for again, and a failure stays failed until the user retries.
+        void OnEnable()
+        {
+            if (!_resume) return;
+            _resume = false;
+            if (State == LocalizerState.Failed) return;
+            if (State != LocalizerState.Localized) { StartLocalization(); return; }
+            if (mode == Mode.OneShot) return;
+            _lastFix = _idleSince = Time.realtimeSinceStartupAsDouble; // the time spent disabled is not time without a fix
+            _burst = false;
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
+            _ = Run(_cts.Token);
+        }
+
+        void OnDisable()
+        {
+            _resume = _cts != null && !_cts.IsCancellationRequested;
+            StopLocalization();
+        }
 
         void OnDestroy()
         {
@@ -362,11 +381,12 @@ namespace StageSettAR
             if (!_burst)
             {
                 if (now < _nextBurst) return false;
-                _burst = true; _burstEnd = now + timing.burstSeconds; _lastFix = now;
+                // The wait between bursts is not time without a fix: only searching counts toward lostAfterSeconds.
+                _burst = true; _burstEnd = now + timing.burstSeconds; _lastFix += now - _idleSince;
                 return true;
             }
             if (now <= _burstEnd) return true;
-            _burst = false; _nextBurst = now + timing.periodSeconds;
+            _burst = false; _nextBurst = now + timing.periodSeconds; _idleSince = now;
             return false;
         }
 
@@ -471,7 +491,7 @@ namespace StageSettAR
 
         void Found(double now)
         {
-            _nextBurst = now + timing.periodSeconds;
+            _nextBurst = now + timing.periodSeconds; _idleSince = now;
             ShowChildren();
             SetState(LocalizerState.Localized);
             onLocalized.Invoke();
