@@ -52,7 +52,8 @@ namespace StageSettAR
         public void PreviousScene()
         {
             int previous = SceneManager.GetActiveScene().buildIndex - 1;
-            if (previous < 0)
+            // The camera permission scene would only load this one again.
+            if (previous < 0 || previous == CameraPermissionGate.SceneIndex)
             {
                 Debug.LogWarning("[SceneSwitcher] Already at the first scene in the build settings.", this);
                 return;

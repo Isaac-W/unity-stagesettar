@@ -30,6 +30,10 @@ namespace StageSettAR
 
         bool _transitioned, _focusLost, _deniedLogged;
 
+        /// <summary>Build index of the gate's scene once it has run, else -1. Not a scene to go back to: it only
+        /// moves on again.</summary>
+        public static int SceneIndex { get; private set; } = -1;
+
         /// <summary>True when every permission in <see cref="Required"/> is granted. Always true off Android.</summary>
         public static bool IsGranted
         {
@@ -45,6 +49,7 @@ namespace StageSettAR
 
         void Awake()
         {
+            SceneIndex = gameObject.scene.buildIndex;
             if (IsGranted) { LoadNext(); return; }
 #if UNITY_ANDROID && !UNITY_EDITOR
             UnityEngine.Android.Permission.RequestUserPermissions(Required);
