@@ -65,14 +65,22 @@ namespace StageSettAR
             // buffer from filling with scenery before the target appears in it, and Collide is
             // explicit because the target is very often a trigger.
             int mask = 1 << target.gameObject.layer;
-            int count = Physics.SphereCastNonAlloc(ray, radius, s_SphereHits, maxDistance, mask,
+            RaycastHit[] hits = s_SphereHits;
+            int count = Physics.SphereCastNonAlloc(ray, radius, hits, maxDistance, mask,
                                                    QueryTriggerInteraction.Collide);
+            // A full buffer may have left the target out (the hits are in no particular order), so ask
+            // again for all of them. Rare enough that the allocation does not matter.
+            if (count == hits.Length)
+            {
+                hits = Physics.SphereCastAll(ray, radius, maxDistance, mask, QueryTriggerInteraction.Collide);
+                count = hits.Length;
+            }
             bool found = false;
             for (int i = 0; i < count; i++)
             {
-                if (s_SphereHits[i].collider != target) continue;
-                if (found && s_SphereHits[i].distance >= hit.distance) continue;
-                hit = s_SphereHits[i];
+                if (hits[i].collider != target) continue;
+                if (found && hits[i].distance >= hit.distance) continue;
+                hit = hits[i];
                 found = true;
             }
 
