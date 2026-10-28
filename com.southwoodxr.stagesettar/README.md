@@ -55,7 +55,7 @@ For more advanced use the same component has **On Localizing**, **On Localized**
 ## Scene setup (Quest 3)
 
 - A normal AR Foundation rig: XR Origin with the camera carrying `ARCameraManager`, plus `ArFoundationCameraSource` on the same object. It needs an OpenXR setup with the Meta camera feature enabled.
-- The source asks for `android.permission.CAMERA` and `horizonos.permission.HEADSET_CAMERA` at runtime; the bundled androidlib declares them in the manifest. `IsReady` is false until granted.
+- Both `android.permission.CAMERA` and `horizonos.permission.HEADSET_CAMERA` are needed; the bundled androidlib declares them in the manifest. They must be granted **before** the camera starts: a camera that opens without them does not retry, and passthrough images never arrive. So the build starts with a scene that only asks for them (`CameraPermissionGate`) and then loads the next build scene. Setup step "Camera permission scene" makes it and puts it first in the build. If a scene starts without the permission anyway, `ArFoundationCameraSource` asks itself and restarts the camera manager on the grant, but that may not be enough; `IsReady` stays false until images arrive.
 - The source timestamps each frame with the camera pose at capture time and applies the lens offset from the head, so localizing while turning your head is fine.
 - Drop the map prefab into the scene and leave `autoStart` on.
 

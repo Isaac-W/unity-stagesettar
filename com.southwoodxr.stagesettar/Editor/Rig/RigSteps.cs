@@ -349,7 +349,7 @@ namespace StageSettAR.Editor
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 
-        static void EnsureFolder()
+        internal static void EnsureFolder()
         {
             if (!AssetDatabase.IsValidFolder(Folder)) AssetDatabase.CreateFolder("Assets", "StageSettAR");
         }

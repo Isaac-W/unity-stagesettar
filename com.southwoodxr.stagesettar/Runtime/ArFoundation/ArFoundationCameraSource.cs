@@ -133,7 +133,6 @@ namespace StageSettAR
         bool _lensResolved, _configChecked, _loggedFirst, _loggedDiagnostics, _yuvFailed;
         bool _permitted;
 #if UNITY_ANDROID && !UNITY_EDITOR
-        static readonly string[] Permissions = { "horizonos.permission.HEADSET_CAMERA", Permission.Camera };
         bool _requested;
 #endif
 
@@ -158,13 +157,17 @@ namespace StageSettAR
                 return;
             }
             _camera = cameraManager.GetComponent<Camera>();
+            if (_camera == null) _camera = xrOrigin.Camera;
+            if (_camera == null)
+            {
+                Debug.LogError("[StageSettAR] ArFoundationCameraSource could not find the AR camera: put the ARCameraManager on it, or set the XROrigin's Camera.");
+                enabled = false;
+                return;
+            }
             _ringCount = _ringHead = 0;
             Application.onBeforeRender += SamplePose;
 
-            _permitted = true;
-#if UNITY_ANDROID && !UNITY_EDITOR
-            _permitted = HasPermissions();
-#endif
+            _permitted = CameraPermissionGate.IsGranted;
         }
 
         void OnDisable()
@@ -188,11 +191,11 @@ namespace StageSettAR
             {
 #if UNITY_ANDROID && !UNITY_EDITOR
                 RequestPermissions();
-                _permitted = HasPermissions();
+                _permitted = CameraPermissionGate.IsGranted;
                 if (!_permitted) return;
-                // The manager must stay enabled while waiting: on Quest it is what shows passthrough. But the
-                // Meta camera subsystem latches the permission state in Start(), so images only flow after a
-                // restart. Toggle once, on a grant that happened while running; costs a frame of passthrough flicker.
+                // Fallback only: a camera subsystem that started before the grant may never deliver images, which is
+                // why the build should start with a CameraPermissionGate scene. The manager must stay enabled while
+                // waiting (on Quest it is what shows passthrough); toggle it once in the hope it restarts the camera.
                 if (cameraManager.enabled)
                 {
                     cameraManager.enabled = false;
@@ -596,20 +599,15 @@ namespace StageSettAR
         }
 
 #if UNITY_ANDROID && !UNITY_EDITOR
-        static bool HasPermissions()
-        {
-            foreach (var p in Permissions)
-                if (!Permission.HasUserAuthorizedPermission(p)) return false;
-            return true;
-        }
-
         void RequestPermissions()
         {
             if (_requested) return;
             _requested = true;
+            Debug.LogWarning("[StageSettAR] Camera permission was not granted before this scene started, so the camera may never " +
+                             "deliver images. Put the camera permission scene first in the build (Tools > StageSettAR > Setup).");
             var callbacks = new PermissionCallbacks();
             callbacks.PermissionDenied += p => Debug.LogWarning($"[StageSettAR] {p} was denied; the camera cannot start without it.");
-            Permission.RequestUserPermissions(Permissions, callbacks);
+            Permission.RequestUserPermissions(CameraPermissionGate.Required, callbacks);
         }
 #endif
     }
