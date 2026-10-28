@@ -730,7 +730,6 @@ namespace StageSettAR.Editor
             camera.allowMSAA = false;
             camera.cullingMask = ~0;
 
-#if GSPLAT_ENABLE_URP
             // Post-processing would tone-map and grade the capture, so the panorama would be
             // graded twice once it is displayed. Opaque and depth copies are dead weight here.
             var cameraData = cameraObject.AddComponent<UniversalAdditionalCameraData>();
@@ -739,7 +738,6 @@ namespace StageSettAR.Editor
             cameraData.renderShadows = false;
             cameraData.requiresColorOption = CameraOverrideOption.Off;
             cameraData.requiresDepthOption = CameraOverrideOption.Off;
-#endif
 
             return cameraObject;
         }
