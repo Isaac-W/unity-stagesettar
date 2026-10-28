@@ -44,7 +44,10 @@ namespace StageSettAR
             // still leaves the very centre clear, a pinhole in the middle of what is supposed
             // to be a solid screen, sitting exactly where the user is looking. Sliding the
             // radius below zero as it closes brings the ramp in with it.
-            Write(target, tint, radius - softness * amount, softness);
+            // The shader measures from the quad's centre to its edge, and the quad is `coverage` times the view, so
+            // convert from view units (the view's half-width is 1) to quad units.
+            float toQuad = 1f / coverage;
+            Write(target, tint, (radius - softness * amount) * toQuad, softness * toQuad);
         }
     }
 }
