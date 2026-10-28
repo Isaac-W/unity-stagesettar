@@ -117,7 +117,8 @@ namespace StageSettAR.Editor
 
         static string Sanitize(string s)
         {
-            var t = Regex.Replace(s ?? "", @"[^A-Za-z0-9 _-]", "_").Trim();
+            // Letters and digits of any script, so two maps named in a non-Latin script do not both become "___".
+            var t = Regex.Replace(s ?? "", @"[^\p{L}\p{N} _-]", "_").Trim();
             return t.Length == 0 ? "StarMap" : t;
         }
 
@@ -230,7 +231,16 @@ namespace StageSettAR.Editor
         {
             var start = json.IndexOf("\"landmarks\"", StringComparison.Ordinal);
             if (start < 0) throw new InvalidDataException("landmarks.json has no landmarks array");
-            var nums = Regex.Matches(json.Substring(json.IndexOf('[', start)), @"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?");
+            // Only the numbers inside the landmarks array: any numeric field after it would break the triplets.
+            var open = json.IndexOf('[', start);
+            var close = -1;
+            for (int i = open, depth = 0; open >= 0 && i < json.Length && close < 0; i++)
+            {
+                if (json[i] == '[') depth++;
+                else if (json[i] == ']' && --depth == 0) close = i;
+            }
+            if (close < 0) throw new InvalidDataException("landmarks.json has no complete landmarks array");
+            var nums = Regex.Matches(json.Substring(open, close - open + 1), @"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?");
             if (nums.Count % 3 != 0) throw new InvalidDataException("landmarks.json is not a list of xyz triplets");
             var pts = new Vector3[nums.Count / 3];
             for (var i = 0; i < pts.Length; i++)
