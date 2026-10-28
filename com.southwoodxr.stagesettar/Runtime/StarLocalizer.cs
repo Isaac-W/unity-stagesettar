@@ -27,6 +27,8 @@ namespace StageSettAR
     public sealed class StarLocalizer : MonoBehaviour
     {
         public enum Mode { OneShot, Periodic, Continuous }
+        public enum LocalizerState { Idle, Initializing, Localized, Lost, Failed }
+        public enum Fusion { Joint, PerFrame }
         // Advanced tuning lives in these groups, which the Inspector shows as collapsed foldouts. The defaults suit a
         // Quest 3 in a room-sized space; most projects never open them.
 

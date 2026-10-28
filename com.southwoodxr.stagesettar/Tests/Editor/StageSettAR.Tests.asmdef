@@ -3,6 +3,7 @@
     "rootNamespace": "StageSettAR.Tests",
     "references": [
         "StageSettAR",
+        "Unity.InferenceEngine",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
