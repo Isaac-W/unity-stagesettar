@@ -107,10 +107,10 @@ namespace StageSettAR
         protected virtual void OnEnable()
         {
             // Only the first enable applies Start Covered; turning the component back on later keeps
-            // whatever state the view was left in rather than snapping back to black.
+            // whatever state the view was left in rather than snapping back to black, and carries on
+            // with a fade that was playing, so its events still fire.
             if (!initialised) progress = startCovered ? 1f : 0f;
             initialised = true;
-            running = false;
             Refresh();
         }
 

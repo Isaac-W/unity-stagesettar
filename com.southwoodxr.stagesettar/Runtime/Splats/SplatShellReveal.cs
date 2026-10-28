@@ -116,6 +116,18 @@ namespace StageSettAR
                 Play();
         }
 
+        // Disabling ends the coroutine without finishing it. Land on the end state and report it, as Play does on an
+        // inactive object, so a sequence waiting on onComplete does not hang.
+        void OnDisable()
+        {
+            if (m_running == null)
+                return;
+            StopCoroutine(m_running);
+            m_running = null;
+            SetAll(IsShown ? 1f : 0f);
+            onComplete?.Invoke();
+        }
+
         void OnDestroy()
         {
             // Property blocks outlive the component, so a scene left mid-fade would stay that way.

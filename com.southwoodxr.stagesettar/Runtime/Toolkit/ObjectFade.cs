@@ -120,6 +120,7 @@ namespace StageSettAR
         bool _hardHiddenSuppressed;
         MaterialPropertyBlock _block;
         Coroutine _running;
+        bool _runningReverse;
 
         /// <summary>0 is invisible, 1 is fully present.</summary>
         public float Alpha { get; private set; } = 1f;
@@ -132,6 +133,18 @@ namespace StageSettAR
             Apply(startHidden ? 0f : 1f);
             if (playOnAwake)
                 FadeIn();
+        }
+
+        // Disabling ends the coroutine without finishing it. Land on the end state and report it, as Play does on an
+        // inactive object, so a sequence waiting on the fade does not hang.
+        void OnDisable()
+        {
+            if (_running == null)
+                return;
+            StopCoroutine(_running);
+            _running = null;
+            Apply(Curve(_runningReverse ? 0f : 1f));
+            Finish(_runningReverse);
         }
 
         void OnDestroy()
@@ -301,6 +314,7 @@ namespace StageSettAR
                 Finish(reverse);
                 return;
             }
+            _runningReverse = reverse;
             _running = StartCoroutine(Run(reverse));
         }
 
