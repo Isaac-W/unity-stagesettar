@@ -579,9 +579,13 @@ namespace StageSettAR
         bool WithinGate(in Alignment cur, in Alignment fix)
         {
             Difference(cur, fix, out float m, out float deg);
-            return m <= gating.gateMeters + 3f * (cur.positionSigma + fix.positionSigma)
-                && deg <= gating.gateDegrees + 3f * (cur.yawSigmaDeg + fix.yawSigmaDeg);
+            return m <= gating.gateMeters + 3f * (Known(cur.positionSigma) + Known(fix.positionSigma))
+                && deg <= gating.gateDegrees + 3f * (Known(cur.yawSigmaDeg) + Known(fix.yawSigmaDeg));
         }
+
+        // A solve whose covariance could not be inverted reports an infinite sigma. Unknown must not widen the gate
+        // to accept anything, so it falls back to the fixed part of the gate.
+        static float Known(float sigma) => float.IsFinite(sigma) ? sigma : 0f;
 
         /// <summary>Largest group of mutually agreeing fixes (around the best medoid), plus a head turn if required.</summary>
         bool TryConsensus(out Alignment seed)
