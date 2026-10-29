@@ -217,13 +217,16 @@ namespace StageSettAR.Editor
                                 hasPose = true,
                             };
 
+                            // The seed is fixed per frame (plus one, since 0 means random), so a rerun gives the same numbers.
+                            // The solver copies the settings when it is built, so it is built after the seed and outside the timing.
+                            pnp.seed = scan.Frames[test[k]].index + 1;
+                            var solver = new StarPnp(n, pnp);
+
                             watch.Restart();
                             Detections d = detector.DetectBlocking(frame);
                             StarLocalizer.FillCorrespondences(d, landmarks, p3, p2, score);
-                            // The seed is fixed per frame (plus one, since 0 means random), so a rerun gives the same numbers.
-                            pnp.seed = scan.Frames[test[k]].index + 1;
                             CameraIntrinsics ki = d.netIntrinsics;
-                            PnpResult r = new StarPnp(n, pnp).Solve(d.count, p3, p2, score, ki.fx, ki.fy, ki.cx, ki.cy, ki.width, ki.height);
+                            PnpResult r = solver.Solve(d.count, p3, p2, score, ki.fx, ki.fy, ki.cx, ki.cy, ki.width, ki.height);
                             watch.Stop();
                             // The first frame at a new scale also builds the network, so it is left out of the timing.
                             if (k > 0 || test.Count == 1) { timedMs += watch.Elapsed.TotalMilliseconds; timedFrames++; }
@@ -245,7 +248,7 @@ namespace StageSettAR.Editor
                                 degrees.Add(double.PositiveInfinity);
                             }
                         }
-                        finally { UnityObjects.Discard(up.texture); }
+                        finally { UnityObjects.Discard(up.texture, immediate: true); }
                     }
 
                     results.Add(new ScaleResult

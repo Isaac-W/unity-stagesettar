@@ -107,7 +107,7 @@ namespace StageSettAR
         void ParseMeta(out CameraIntrinsics k0, out int rotation0)
         {
             byte[] bytes = Read("meta.json") ?? throw new InvalidDataException("Not a .starscan (no meta.json).");
-            var meta = JsonUtility.FromJson<MetaDto>(Encoding.UTF8.GetString(bytes));
+            var meta = JsonUtility.FromJson<MetaDto>(DecodeText(bytes));
             if (meta == null || meta.format != Format) throw new InvalidDataException("Not a .starscan file.");
             if (meta.version > MaxVersion) throw new InvalidDataException($".starscan version {meta.version} is newer than this reader.");
             if (meta.image == null || meta.image.width <= 0 || meta.image.height <= 0) throw new InvalidDataException("meta.json has no image size.");
@@ -158,7 +158,7 @@ namespace StageSettAR
             var rows = new List<double[]>();
             byte[] bytes = Read(name);
             if (bytes == null) return rows;
-            foreach (string raw in Encoding.UTF8.GetString(bytes).Split('\n'))
+            foreach (string raw in DecodeText(bytes).Split('\n'))
             {
                 string line = raw.Trim();
                 if (line.Length == 0 || line[0] == '#') continue;
@@ -194,6 +194,16 @@ namespace StageSettAR
             using var ms = new MemoryStream();
             s.CopyTo(ms);
             return ms.ToArray();
+        }
+
+        /// <summary>
+        /// The text of a scan file. A leading UTF-8 byte order mark is dropped: <c>Encoding.UTF8</c> keeps it as a character,
+        /// which would break the first number of a text file and the first token of meta.json.
+        /// </summary>
+        static string DecodeText(byte[] bytes)
+        {
+            string text = Encoding.UTF8.GetString(bytes);
+            return text.Length > 0 && text[0] == '\uFEFF' ? text.Substring(1) : text;
         }
 
         // ---------------------------------------------------------------- test split
@@ -253,7 +263,7 @@ namespace StageSettAR
                 tex = new Texture2D(w, h, TextureFormat.RGB24, false);
                 tex.SetPixels32(px);
                 tex.Apply(false);
-                UnityObjects.Discard(stored);
+                UnityObjects.Discard(stored, immediate: true);
             }
 
             if (cropAspect > 0f)
@@ -264,7 +274,7 @@ namespace StageSettAR
                     Texture2D cropped = new Texture2D(cw, ch, TextureFormat.RGB24, false);
                     cropped.SetPixels32(CropPixels(tex.GetPixels32(), tex.width, tex.height, x0, y0, cw, ch));
                     cropped.Apply(false);
-                    UnityObjects.Discard(tex);
+                    UnityObjects.Discard(tex, immediate: true);
                     tex = cropped;
                     ku = CropIntrinsics(ku, x0, y0, cw, ch);
                 }

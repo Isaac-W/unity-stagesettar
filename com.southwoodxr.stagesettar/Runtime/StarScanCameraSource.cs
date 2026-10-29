@@ -14,8 +14,8 @@ namespace StageSettAR
         [Header("Scan")]
         [Tooltip("A .starscan file or an unpacked scan folder.")]
         [SerializeField] string scanPath = "";
-        [Tooltip("Deliver only the held-out test frames (test.txt, else every 10th), not every frame.")]
-        [SerializeField] bool testFramesOnly = true;
+        [Tooltip("Deliver only the held-out test frames (test.txt, else every 10th), not every frame. Off by default: test frames are 10 apart, and the localizer reads such jumps as tracking loss.")]
+        [SerializeField] bool testFramesOnly;
         [SerializeField] bool loop = true;
         [Tooltip("Centre-crops each frame to this aspect ratio, to imitate a camera with a different shape. The ground-truth pose is unchanged.")]
         [SerializeField] CropAspect cropAspect = CropAspect.None;
@@ -35,7 +35,7 @@ namespace StageSettAR
         long _id;
         double _nextFrameTime;
         int _currentIndex = -1;
-        Pose _groundTruth;
+        Pose _groundTruth = Pose.identity;
 
         public override Transform TrackingSpace => trackingSpace;
         public override bool IsReady => _order != null && _order.Count > 0;
