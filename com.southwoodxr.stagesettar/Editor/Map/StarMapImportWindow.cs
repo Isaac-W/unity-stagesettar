@@ -154,6 +154,9 @@ namespace StageSettAR.Editor
             if (map.format != "starmap") throw new InvalidDataException($"Not a STAR map (format '{map.format}')");
             if (map.version > 1) throw new InvalidDataException($"Unsupported map version {map.version}");
             // map.json "origin", if present, is ignored: the landmarks already sit in the map's own frame.
+            if (!m_mapText.Contains("\"rotation\"") && !m_mapText.Contains("\"rotations\""))
+                throw new InvalidDataException("map.json has neither input.rotation nor input.rotations");
+            // JsonUtility cannot tell a missing bool from false, so check the text for the key.
             if (m_mapText.Contains("\"variableSize\"") && !map.onnx.variableSize)
                 throw new InvalidDataException("This map's network has a fixed input size, which is not supported.");
             if (map.onnx.sizeMultiple > 0 && map.onnx.sizeMultiple % 16 != 0)

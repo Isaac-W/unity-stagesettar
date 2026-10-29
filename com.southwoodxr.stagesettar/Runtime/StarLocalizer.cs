@@ -79,9 +79,9 @@ namespace StageSettAR
         {
             [Tooltip("Where the landmark network runs. GPUCompute is right for Quest and desktop GPUs.")]
             public BackendType backend = BackendType.GPUCompute;
-            [Tooltip("Network layers run per rendered frame, so no single frame pays for the whole network. Default 10: at the default inference rate the network finishes well inside one interval, and each frame only dispatches a slice. 0 runs the whole network in one frame.")]
+            [Tooltip("Network layers run per rendered frame, so no single frame pays for the whole network. 0 runs it all in one frame.")]
             public int layersPerFrame = 10;
-            [Tooltip("Most pixels the network sees. Default 500000 (about 800 x 600): the input is otherwise as large as the camera image allows at the map's focal length, which can be slow on a headset. When the cap applies, the centre of the image is used. 0 means no limit.")]
+            [Tooltip("Most pixels the network sees (500000 is about 800 x 600); a larger image is cropped to its centre. 0 means no limit.")]
             public int maxInputPixels = 500000;
             [Tooltip("Pose-solver tuning. The defaults work for the Quest camera.")]
             public PnpSettings pnp = PnpSettings.Default;
@@ -267,7 +267,8 @@ namespace StageSettAR
             }
             if (map.LandmarkCount < 4)
             {
-                Debug.LogError($"[StageSettAR] Map '{map.name}' has {map.LandmarkCount} landmarks; at least 4 are needed to solve a pose.", this);
+                _cts?.Cancel();
+                Fail($"Map '{map.name}' has {map.LandmarkCount} landmarks; at least 4 are needed to solve a pose.");
                 return;
             }
             cameraSource.TargetFocal = map.focal;

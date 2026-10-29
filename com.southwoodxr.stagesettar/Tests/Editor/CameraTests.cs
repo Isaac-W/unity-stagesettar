@@ -54,32 +54,36 @@ namespace StageSettAR.Tests
         [Test]
         public void IntrinsicsThroughTurnScaleAndCrop()
         {
-            // 1280 x 1280 frame, one clockwise turn, trained at focal 685.9: the scaled frame is 1011.8 square,
-            // so the network gets 1008 x 1008 (the largest multiples of 16), centre-cropped.
-            var k = new CameraIntrinsics(867.7f, 867.7f, 639.5f, 639.5f, 1280, 1280);
-            var g = StarDetector.Geometry(k, 1280, 1280, 1, 685.9f);
+            // 1280 x 960 frame, one clockwise turn (960 x 1280 after it), trained at focal 685.9: the scaled frame is
+            // 758.8 x 1011.8, so the network gets 752 x 1008 (the largest multiples of 16), centre-cropped.
+            var k = new CameraIntrinsics(867.7f, 867.7f, 639.5f, 479.5f, 1280, 960);
+            var g = StarDetector.Geometry(k, 1280, 960, 1, 685.9f);
 
-            // turn: fx' = fy, cx' = H - cy
-            const double fx1 = 867.7, cx1 = 1280 - 639.5, cy1 = 639.5;
+            // turn: fx' = fy, cx' = H - cy, cy' = cx
+            const double fx1 = 867.7, cx1 = 960 - 479.5, cy1 = 639.5;
             double s = 685.9 / fx1;                          // 0.79048
-            double cw = 1008 / s;                            // 1275.2
-            double x0 = (1280 - cw) / 2;
+            double cw = 752 / s;
+            double ch = 1008 / s;
+            double x0 = (960 - cw) / 2;
+            double y0 = (1280 - ch) / 2;
 
-            Assert.AreEqual(1008, g.outW);
+            Assert.AreEqual(752, g.outW);
             Assert.AreEqual(1008, g.outH);
-            Assert.AreEqual(1280f, g.rotatedW, Tol);
+            Assert.AreEqual(960f, g.rotatedW, Tol);
             Assert.AreEqual(1280f, g.rotatedH, Tol);
             Assert.AreEqual(s, g.scale, 1e-5);
             Assert.AreEqual(0.79048, g.scale, 1e-4);
             Assert.AreEqual(cw, g.cropW, 0.01);
+            Assert.AreEqual(ch, g.cropH, 0.01);
             Assert.AreEqual(x0, g.x0, 0.01);
+            Assert.AreEqual(y0, g.y0, 0.01);
             Assert.AreEqual(2, g.taps);
 
             Assert.AreEqual(685.9, g.net.fx, 0.01);          // fx'' = fx' s = the map focal
             Assert.AreEqual(685.9, g.net.fy, 0.01);
             Assert.AreEqual((cx1 - x0) * s, g.net.cx, 0.01);
-            Assert.AreEqual((cy1 - x0) * s, g.net.cy, 0.01);
-            Assert.AreEqual(1008, g.net.width);
+            Assert.AreEqual((cy1 - y0) * s, g.net.cy, 0.01);
+            Assert.AreEqual(752, g.net.width);
             Assert.AreEqual(1008, g.net.height);
         }
 

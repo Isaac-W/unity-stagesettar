@@ -37,9 +37,9 @@ namespace StageSettAR
 
     /// <summary>
     /// Runs a map's landmark network on camera frames. The camera image is rotated, scaled and cropped
-    /// on the GPU to the network's trained camera (port of star-mobile resample.ts), inference runs in
-    /// Sentis (optionally a few layers per frame), and the readout (star-mobile readout.ts) is part of the same Sentis graph so that only
-    /// about 5.5k floats are read back, asynchronously, instead of the 7 MB of logits.
+    /// on the GPU to the network's trained camera (port of star-mobile resample.ts), and inference runs in
+    /// Sentis (optionally a few layers per frame). The readout (star-mobile readout.ts) is part of the same
+    /// Sentis graph, so only about 5.5k floats are read back asynchronously instead of the 7 MB of logits.
     /// </summary>
     /// <remarks>
     /// Network input is <c>image01 * 255</c>: the shader writes the sRGB-encoded 8-bit colour as 0..1
@@ -111,6 +111,7 @@ namespace StageSettAR
             _busy = true;
             try
             {
+                // Warm-up only pre-compiles kernels; the network is built again at the real size on the first detection.
                 EnsureSize(Mathf.Max(SizeMultiple, _map.suggestedWidth / SizeMultiple * SizeMultiple),
                            Mathf.Max(SizeMultiple, _map.suggestedHeight / SizeMultiple * SizeMultiple));
                 await RunNetwork(ct);
@@ -171,36 +172,47 @@ namespace StageSettAR
         {
             int perFrame = LayersPerFrame;
             if (perFrame <= 0) { _worker.Schedule(_input); return; }
-            bool finished = false;
             try
             {
                 var steps = _worker.ScheduleIterable(_input);
-                for (int i = 1; steps.MoveNext(); i++)
+                int layersThisFrame = 0;
+                while (steps.MoveNext())
                 {
-                    if (i % perFrame != 0) continue;
+                    if (++layersThisFrame < perFrame) continue;
+                    layersThisFrame = 0;
                     await Awaitable.NextFrameAsync(ct);
                     if (_disposed) throw new OperationCanceledException();
                 }
-                finished = true;
             }
-            finally
+            catch
             {
                 // A half-run schedule leaves the worker in an unknown state, so the next detection builds a fresh one.
-                if (!finished) _stale = true;
+                _stale = true;
+                throw;
             }
         }
 
         /// <summary>Builds (or rebuilds, if the size changed or a run was cut short) the network objects for a w x h input.</summary>
         void EnsureSize(int w, int h)
         {
-            if (_worker != null && !_stale && w == _w && h == _h) return;
+            if (_worker != null && w == _w && h == _h)
+            {
+                if (!_stale) return;
+                // Only the worker is unsafe after a cut-short run; the tensor, texture and buffer are still valid.
+                _worker.Dispose();
+                _worker = null;
+                _worker = new Worker(BuildModel(_map, w, h), _backend);
+                _stale = false;
+                return;
+            }
             FreeNetwork();
+            // Assigned only once everything is built, so a throw cannot leave a half-built network that looks current.
             var worker = new Worker(BuildModel(_map, w, h), _backend);
-            _worker = worker;
-            _input = new Tensor<float>(new TensorShape(1, 3, h, w));
-            _rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear)
+            var input = new Tensor<float>(new TensorShape(1, 3, h, w));
+            var rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear)
             { filterMode = FilterMode.Point, hideFlags = HideFlags.HideAndDontSave };
-            _rt.Create();
+            rt.Create();
+            _worker = worker; _input = input; _rt = rt;
             _packed = new float[(w / _map.cellSize) * (h / _map.cellSize) + 3 * _n];
             _w = w; _h = h; _stale = false;
         }
