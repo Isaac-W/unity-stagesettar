@@ -54,8 +54,9 @@ namespace StageSettAR
         [Tooltip("The XR Origin whose space poses are expressed in. Found automatically when empty.")]
         [SerializeField] XROrigin xrOrigin;
 
-        [Tooltip("Ask the platform for its highest-resolution camera configuration (ignored where unsupported, e.g. Quest).")]
-        [SerializeField] bool preferHighestResolution = true;
+        [Tooltip("Camera resolution to ask the platform for; the closest available configuration is used, preferring the same aspect ratio. " +
+                 "Zero means the highest. Ignored where the platform has no choice (e.g. Quest).")]
+        [SerializeField] Vector2Int requestedResolution;
 
         [SerializeField] ManualIntrinsics manualIntrinsics;
 
@@ -105,6 +106,8 @@ namespace StageSettAR
         const double AssumedMinLatency = 0.03;
         // Without a target focal, the old fixed cap on the converted width.
         const int FallbackMaxWidth = 1280;
+        // A kept frame older than this (seconds) is replaced by a new one instead of being handed out.
+        const double MaxFrameAge = 0.1;
 
         struct PoseSample { public double time; public Vector3 position; public Quaternion rotation; }
         const int RingSize = 256; // > 2 s at 90 Hz
@@ -118,6 +121,7 @@ namespace StageSettAR
         NativeArray<byte> _stage;                 // padding for plane buffers that stop short of the last row
         CameraFrame _frame;
         long _nextId = 1;
+        bool _wanted;                             // a consumer asked for a frame that is not there yet
 
         XRCpuImage.AsyncConversion _conversion;
         bool _converting;
@@ -140,10 +144,14 @@ namespace StageSettAR
 
         public override Transform TrackingSpace => xrOrigin != null ? xrOrigin.transform : null;
 
+        // Images are only acquired and uploaded when asked for (the localizer wants a few per second, the camera
+        // delivers many more). A miss records the request and the next Update serves it.
         public override bool TryGetFrame(long afterId, out CameraFrame frame)
         {
             frame = _frame;
-            return _frame.id > afterId;
+            if (_frame.id > afterId && Time.realtimeSinceStartupAsDouble - _frame.timestamp < MaxFrameAge) return true;
+            _wanted = true;
+            return false;
         }
 
         void OnEnable()
@@ -207,7 +215,8 @@ namespace StageSettAR
 
             if (!_configChecked) SelectConfiguration();
             if (_converting) PollConversion();
-            if (!_converting) TryBeginConversion();
+            // The first frame is fetched unasked because IsReady waits for it, and a consumer only asks once ready.
+            if (!_converting && (_wanted || _frame.id == 0)) TryBeginConversion();
         }
 
         // After TrackedPoseDriver (order 0), so the camera transform is already this frame's.
@@ -227,7 +236,6 @@ namespace StageSettAR
         void SelectConfiguration()
         {
             _configChecked = true;
-            if (!preferHighestResolution && !debug.logDiagnostics) return;
             try
             {
                 using var configs = cameraManager.GetConfigurations(Allocator.Temp);
@@ -238,14 +246,13 @@ namespace StageSettAR
                     Debug.Log(sb.ToString());
                 }
                 if (configs.Length == 0) return;
-                if (preferHighestResolution)
-                {
-                    var best = configs[0];
-                    foreach (var c in configs)
-                        if ((long)c.width * c.height > (long)best.width * best.height) best = c;
-                    if (cameraManager.currentConfiguration != best) cameraManager.currentConfiguration = best;
-                    Debug.Log($"[StageSettAR] Camera configuration: {best}");
-                }
+                var sizes = new Vector2Int[configs.Length];
+                for (int i = 0; i < sizes.Length; i++) sizes[i] = new Vector2Int(configs[i].width, configs[i].height);
+                int index = ClosestResolution(sizes, requestedResolution);
+                if (index < 0) return;
+                var best = configs[index];
+                if (cameraManager.currentConfiguration != best) cameraManager.currentConfiguration = best;
+                Debug.Log($"[StageSettAR] Camera configuration: {best}");
                 if (debug.logDiagnostics)
                 {
                     var current = cameraManager.currentConfiguration;
@@ -296,7 +303,7 @@ namespace StageSettAR
 
                 if (!cpu.FormatSupported(TextureFormat.RGBA32)) return;
 
-                var size = ConversionSize(cpu.width, cpu.height, native.fx);
+                var size = ConversionSize(cpu.width, cpu.height, Mathf.Min(native.fx, native.fy));
                 _conversion = cpu.ConvertAsync(new XRCpuImage.ConversionParams(cpu, TextureFormat.RGBA32)
                 {
                     outputDimensions = size,
@@ -309,14 +316,18 @@ namespace StageSettAR
             } // disposing the image is safe while the conversion is in flight
         }
 
-        /// <summary>Size of the RGBA fallback image: the explicit cap if set, otherwise just enough for the map's focal length.</summary>
-        Vector2Int ConversionSize(int width, int height, float fx)
+        /// <summary>
+        /// Size of the RGBA fallback image: the explicit cap if set, otherwise just enough for the map's focal length.
+        /// The source does not know the map's turn, which decides whether fx or fy is the relevant focal length, so
+        /// the smaller of the two is passed: it gives the wider image.
+        /// </summary>
+        Vector2Int ConversionSize(int width, int height, float focal)
         {
             int w;
             if (image.maxWidth > 0) w = Mathf.Min(width, image.maxWidth);
             else
             {
-                w = AutoWidth(width, fx, TargetFocal);
+                w = AutoWidth(width, focal, TargetFocal);
                 if (!(TargetFocal > 0f)) w = Mathf.Min(w, FallbackMaxWidth);
             }
             return new Vector2Int(Mathf.Max(1, w), Mathf.Max(1, Mathf.RoundToInt((float)height * w / width)));
@@ -468,6 +479,7 @@ namespace StageSettAR
 
             frame.flipY = false; // rows are top-first, see class remarks
             frame.id = _nextId++;
+            _wanted = false;
             frame.timestamp = capture;
             frame.hasPose = TryPoseAt(capture, out var head);
             if (frame.hasPose) frame.cameraPose = ToSensorPose(head);
@@ -583,7 +595,7 @@ namespace StageSettAR
             sb.Append($"\n  upload: {(image.gpuYuvConversion && yuv ? "raw " + layout + " planes, converted on the GPU" : "RGBA32 conversion")}");
             if (!yuv || !image.gpuYuvConversion)
             {
-                var size = ConversionSize(cpu.width, cpu.height, native.fx);
+                var size = ConversionSize(cpu.width, cpu.height, Mathf.Min(native.fx, native.fy));
                 sb.Append($", {size.x}x{size.y} (target focal {TargetFocal:F1}, maxWidth {image.maxWidth})");
             }
             Debug.Log(sb.ToString());

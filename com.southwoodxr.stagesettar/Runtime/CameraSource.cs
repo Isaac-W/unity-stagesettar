@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace StageSettAR
@@ -174,7 +176,41 @@ namespace StageSettAR
             return Mathf.Clamp(w, 1, imageWidth);
         }
 
+        /// <summary>
+        /// Index of the entry of <paramref name="sizes"/> to use for a requested resolution, or -1 when the list is empty.
+        /// A request with a zero side means the largest. Otherwise sizes with the requested aspect ratio (within 2%)
+        /// are preferred, and among the candidates the one whose pixel count is closest to the request wins.
+        /// </summary>
+        public static int ClosestResolution(IReadOnlyList<Vector2Int> sizes, Vector2Int requested)
+        {
+            int best = -1;
+            bool any = requested.x > 0 && requested.y > 0;
+            long target = (long)requested.x * requested.y;
+            float aspect = any ? (float)requested.x / requested.y : 0f;
+
+            // Two passes: first only sizes with the requested aspect, then (if there were none) all of them.
+            for (int pass = 0; pass < 2 && best < 0; pass++)
+            {
+                for (int i = 0; i < sizes.Count; i++)
+                {
+                    long area = (long)sizes[i].x * sizes[i].y;
+                    if (area <= 0) continue;
+                    if (any && pass == 0 && Mathf.Abs((float)sizes[i].x / sizes[i].y / aspect - 1f) > 0.02f) continue;
+                    if (best < 0) { best = i; continue; }
+                    long bestArea = (long)sizes[best].x * sizes[best].y;
+                    long d = any ? Math.Abs(area - target) : -area;
+                    long bestD = any ? Math.Abs(bestArea - target) : -bestArea;
+                    if (d < bestD || (d == bestD && area > bestArea)) best = i;
+                }
+            }
+            return best;
+        }
+
         /// <summary>Fetch the newest frame with an id greater than <paramref name="afterId"/>.</summary>
+        /// <remarks>
+        /// A source may acquire frames only when asked, so a call that returns false can be what makes the next frame
+        /// arrive: keep calling while a frame is wanted.
+        /// </remarks>
         /// <returns>False when there is no such frame.</returns>
         public abstract bool TryGetFrame(long afterId, out CameraFrame frame);
     }

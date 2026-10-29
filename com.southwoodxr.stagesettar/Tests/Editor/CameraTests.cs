@@ -127,6 +127,47 @@ namespace StageSettAR.Tests
             Assert.AreEqual(1280, CameraSource.AutoWidth(1280, 867.7f, 0f));
         }
 
+        // ------------------------------------------------------------ camera configuration choice
+
+        static readonly Vector2Int[] Sizes =
+        {
+            new Vector2Int(640, 480), new Vector2Int(1280, 720), new Vector2Int(1920, 1080), new Vector2Int(4000, 3000),
+        };
+
+        [Test]
+        public void ZeroRequestPicksTheLargestConfiguration()
+        {
+            Assert.AreEqual(3, CameraSource.ClosestResolution(Sizes, Vector2Int.zero));
+        }
+
+        [Test]
+        public void RequestPicksTheClosestAreaWithTheSameAspect()
+        {
+            Assert.AreEqual(1, CameraSource.ClosestResolution(Sizes, new Vector2Int(1280, 720)));
+            Assert.AreEqual(2, CameraSource.ClosestResolution(Sizes, new Vector2Int(1700, 956)));
+        }
+
+        [Test]
+        public void MatchingAspectBeatsCloserAreaOfAnotherAspect()
+        {
+            // 1024 x 768 (4:3) is closer in area to 1280 x 720 than 1920 x 1080, but only the latter is 16:9.
+            var sizes = new[] { new Vector2Int(1024, 768), new Vector2Int(1920, 1080) };
+            Assert.AreEqual(1, CameraSource.ClosestResolution(sizes, new Vector2Int(1280, 720)));
+        }
+
+        [Test]
+        public void WithoutAMatchingAspectTheClosestAreaWins()
+        {
+            var sizes = new[] { new Vector2Int(640, 480), new Vector2Int(4000, 3000) };
+            Assert.AreEqual(0, CameraSource.ClosestResolution(sizes, new Vector2Int(1280, 720)));
+        }
+
+        [Test]
+        public void NoConfigurationsGiveMinusOne()
+        {
+            Assert.AreEqual(-1, CameraSource.ClosestResolution(new Vector2Int[0], new Vector2Int(1280, 720)));
+        }
+
         // ------------------------------------------------------------ YUV reference
 
         [Test]
