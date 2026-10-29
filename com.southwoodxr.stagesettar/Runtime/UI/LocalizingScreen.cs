@@ -8,7 +8,7 @@ namespace StageSettAR
     /// <summary>
     /// A small panel that tells the user what the STAR Localizer is doing: looking for the room, found it,
     /// lost it, or gave up. With the Adaptive mode the panel goes away as soon as the map is first placed, since the
-    /// search is short and the later refinement needs no message.
+    /// later refinement needs no message; until then the bar shows the agreeing fixes.
     /// </summary>
     /// <remarks>
     /// The panel floats a little below eye level and follows the user's view softly (it uses
@@ -143,8 +143,8 @@ namespace StageSettAR
         void UpdateBar(LocalizerState state)
         {
             bool searching = state == LocalizerState.Initializing || state == LocalizerState.Lost;
-            // Adaptive finds the room at the first fix, so there is no progress to show.
-            bool showBar = searching && !localizer.IsAdaptive;
+            // Adaptive: only before the first placement; after a timeout the map is still shown and the next fix corrects it.
+            bool showBar = searching && (!localizer.IsAdaptive || !localizer.CurrentAlignment.valid);
             if (bar != null && bar.activeSelf != showBar) bar.SetActive(showBar);
             if (!showBar || barFill == null) return;
             // Eased, because the real progress moves in steps as each fix arrives.

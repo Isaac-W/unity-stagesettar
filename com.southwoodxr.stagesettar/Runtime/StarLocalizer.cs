@@ -22,7 +22,7 @@ namespace StageSettAR
     /// slowly, and is not touched while the user stands still.
     /// <see cref="Fusion.PerFrame"/> skips the gate and the refit and places the map straight from
     /// each fix, for comparing against the joint fit.
-    /// In <see cref="Mode.Adaptive"/> (the default) the first confident fix places the map, and every further fix refines it
+    /// In <see cref="Mode.Adaptive"/> (the default) the first few agreeing confident fixes place the map, and every further fix refines it
     /// at full rate until enough coverage has been seen (head turn or travel, over enough agreeing fixes).
     /// After that the localizer only refines in short bursts, when time has passed or the user has moved or turned a lot
     /// (see <see cref="LocalizerSchedule"/>).
@@ -66,9 +66,11 @@ namespace StageSettAR
         [Serializable]
         public sealed class GatingSettings
         {
+            [Tooltip("Adaptive mode only: how many confident fixes must agree before the map is first shown (and again after a tracking reset). Default 3: one lucky wrong fix cannot place the map. 1 shows it at the first confident fix.")]
+            [Range(1, 16)] public int fixesToShow = 3;
             [Tooltip("OneShot, Periodic and Continuous modes: ask the user to look around before trusting the room. Default on: one lucky wrong fix could otherwise put the map in the wrong place. Off: the first accepted fix is used.")]
             public bool requireLookAround = true;
-            [Tooltip("The agreeing fixes must all arrive within this many seconds. Default 10: enough time for a slow look around.")]
+            [Tooltip("The agreeing fixes must all arrive within this many seconds. Default 10: enough time for a slow look around. Adaptive mode: the same window for the fixes that show the map.")]
             public float lookAroundSeconds = 10f;
             [Tooltip("How many separate fixes must agree. Default 4: one wrong fix agreeing with three others by chance is very unlikely. Adaptive mode: fixes needed before the map counts as converged.")]
             public int minFixes = 4;
@@ -127,7 +129,7 @@ namespace StageSettAR
         public bool hideUntilLocalized = true;
 
         [Header("Mode")]
-        [Tooltip("Adaptive (the default): place the map at the first good fix, refine at full rate until enough of the room has been seen, then refine in short bursts " +
+        [Tooltip("Adaptive (the default): place the map once a few good fixes agree, refine at full rate until enough of the room has been seen, then refine in short bursts " +
                  "every so often or when the user has moved or turned a lot. OneShot: localize once, then stop. Periodic: short refinement bursts on a timer. Continuous: never stop.")]
         public Mode mode = Mode.Adaptive;
 
@@ -188,22 +190,24 @@ namespace StageSettAR
         /// False again after the room is lost.</summary>
         public bool IsConverged => _converged;
 
-        /// <summary>How many recent fixes agree with each other so far (Adaptive: accepted fixes since the first placement).</summary>
+        /// <summary>How many recent fixes agree with each other so far (Adaptive: before the first placement the same, after it the accepted fixes since then).</summary>
         public int AgreeingFixes
         {
             get
             {
-                if (IsAdaptive) return _coverage.Count;
+                if (IsAdaptive && _placed) return _coverage.Count;
                 RefreshProgress();
                 return _agreeing;
             }
         }
 
-        /// <summary>How many agreeing fixes are needed before the room counts as found (Adaptive: as converged).</summary>
+        /// <summary>How many agreeing fixes are needed before the room counts as found (Adaptive: before the first placement
+        /// <c>fixesToShow</c>, after it as many as are needed to converge).</summary>
         public int FixesNeeded
         {
             get
             {
+                if (AwaitingShow) return Math.Max(1, gating.fixesToShow);
                 bool lookAround = debug.fusion == Fusion.Joint && gating.requireLookAround;
                 return IsAdaptive || lookAround ? Math.Max(1, gating.minFixes) : 1;
             }
@@ -214,7 +218,7 @@ namespace StageSettAR
         {
             get
             {
-                if (IsAdaptive) return _coverage.TurnDegrees;
+                if (IsAdaptive) return _placed ? _coverage.TurnDegrees : 0f;
                 RefreshProgress();
                 return _turnDeg;
             }
@@ -226,7 +230,7 @@ namespace StageSettAR
             get
             {
                 if (Done) return 1f;
-                if (IsAdaptive) return _coverage.FixesProgress(gating.minFixes);
+                if (IsAdaptive && !AwaitingShow) return _coverage.FixesProgress(gating.minFixes);
                 return Mathf.Clamp01(AgreeingFixes / (float)FixesNeeded);
             }
         }
@@ -245,13 +249,13 @@ namespace StageSettAR
         }
 
         /// <summary>One number, 0 to 1, for a progress bar while the room is being found: the average of fix progress and turn progress.
-        /// 1 once localized. In Adaptive mode the room is found at the first fix, so use <see cref="CoverageProgress"/> for the refinement after it.</summary>
+        /// 1 once localized. In Adaptive mode it is the agreeing fixes towards <c>fixesToShow</c> before the first placement, so use <see cref="CoverageProgress"/> for the refinement after it.</summary>
         public float SearchProgress
         {
             get
             {
                 if (State == LocalizerState.Localized) return 1f;
-                if (IsAdaptive) return 0f;
+                if (IsAdaptive) return AwaitingShow ? FixesProgress : 0f;
                 return 0.5f * (FixesProgress + TurnProgress);
             }
         }
@@ -317,6 +321,9 @@ namespace StageSettAR
         float _turnDeg;
 
         Transform Root => mapRoot ? mapRoot : transform;
+
+        // Adaptive: the map is not shown yet (start-up, or after a tracking reset), so fixes are collected until enough agree.
+        bool AwaitingShow => IsAdaptive && !_placed;
 
         bool Done => IsAdaptive ? _converged : State == LocalizerState.Localized;
 
@@ -494,7 +501,7 @@ namespace StageSettAR
                     if (State == LocalizerState.Initializing && now - _initStart > timing.failAfterSeconds)
                         Fail(_initFixes == 0
                             ? "Not in this room: no known landmarks were recognised."
-                            : "Not in this room: the landmark fixes never agreed" + (gating.requireLookAround ? " (or the headset was not turned enough)." : "."));
+                            : "Not in this room: the landmark fixes never agreed" + (gating.requireLookAround && !IsAdaptive ? " (or the headset was not turned enough)." : "."));
                 }
             }
             catch (OperationCanceledException) { }
@@ -572,11 +579,10 @@ namespace StageSettAR
 
             _schedule.FixAccepted();
             _initFixes++;
-            if (IsAdaptive)
+            if (IsAdaptive && _placed)
             {
-                // Initializing / Lost: the first confident fix places the map. The single fix is protected by the confidence
-                // threshold, the wide gate and the re-seed after three agreeing rejects, and waiting for a second one would
-                // only delay the map by a quarter of a second or more.
+                // Lost by timeout (or a restart): the map is still shown, so the first confident fix corrects it. The single fix is
+                // protected by the confidence threshold, the wide gate and the re-seed after three agreeing rejects.
                 SeedFrom(w, frame, d, a, cameraInMap.position, now);
                 Place(_current, !_visible || !_placed);
                 _rejects = 0;
@@ -585,7 +591,7 @@ namespace StageSettAR
                 return;
             }
 
-            // Initializing / Lost: collect fixes and look for a consensus.
+            // Initializing / Lost: collect fixes and look for a consensus (Adaptive: before the map is first shown, without a turn).
             // Not yet in the solver window: frames from a wrong (non-consensus) cluster would pollute the first Solve.
             _cands.Add(new Candidate
             {
@@ -604,6 +610,7 @@ namespace StageSettAR
                     if (!Agree(seed, c.a)) continue;
                     _solver.AddFrame(c.det, null, c.cam, c.time);
                     _scale.Add(new Vector3d(c.mapPos), new Vector3d(c.cam.position), seed.yawDeg, c.sigma);
+                    if (IsAdaptive) _coverage.Add(c.cam.position, Heading(c.cam));   // the fixes that placed the map count as covered
                 }
                 _scale.Advance(now);
                 Alignment fit = SolveWindow(seed);
@@ -613,6 +620,7 @@ namespace StageSettAR
                 Place(_current, snap);
                 _rejects = 0;
                 Found(now);
+                if (IsAdaptive) CheckConverged();
             }
         }
 
@@ -628,6 +636,11 @@ namespace StageSettAR
         void AddCoverage(in Pose camera)
         {
             _coverage.Add(camera.position, Heading(camera));
+            CheckConverged();
+        }
+
+        void CheckConverged()
+        {
             if (_coverage.IsComplete(gating.minFixes, gating.minTurnDeg, gating.minMoveMeters)) SetConverged();
         }
 
@@ -745,13 +758,13 @@ namespace StageSettAR
         // to accept anything, so it falls back to the fixed part of the gate.
         static float Known(float sigma) => float.IsFinite(sigma) ? sigma : 0f;
 
-        /// <summary>Largest group of mutually agreeing fixes (around the best medoid), plus a head turn if required.</summary>
+        /// <summary>Largest group of mutually agreeing fixes (around the best medoid), plus a head turn if required (never in Adaptive mode, where the turn is a later step).</summary>
         bool TryConsensus(out Alignment seed)
         {
             seed = default;
             int best = BestCluster(out int bestCount);
             if (best < 0 || bestCount < FixesNeeded) return false;
-            if (gating.requireLookAround && ClusterTurn(best) < gating.minTurnDeg) return false;
+            if (gating.requireLookAround && !IsAdaptive && ClusterTurn(best) < gating.minTurnDeg) return false;
             seed = _cands[best].a;
             return true;
         }
@@ -795,7 +808,7 @@ namespace StageSettAR
             _progressFrame = Time.frameCount;
             _cands.RemoveAll(c => c.time < Time.realtimeSinceStartupAsDouble - gating.lookAroundSeconds);
             int best = BestCluster(out _agreeing);
-            _turnDeg = best >= 0 && gating.requireLookAround ? ClusterTurn(best) : 0f;
+            _turnDeg = best >= 0 && gating.requireLookAround && !IsAdaptive ? ClusterTurn(best) : 0f;
         }
 
         static float Heading(Pose p) => Heading(p.rotation * Vector3.forward);
