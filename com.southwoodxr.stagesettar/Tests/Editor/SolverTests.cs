@@ -349,7 +349,7 @@ namespace StageSettAR.Tests
             var r = new System.Random(seed);
             Vector3[] map = Room(r, 200);
             var sc = new AlignScene { map = map, truth = truth, solver = new AlignmentSolver(settings, map) };
-            sc.solver.SetScale(truth.scale);   // the solver holds the scale; the session estimator owns it in the app
+            sc.solver.SetScale(truth.scale);   // the solver holds the scale
             Matrix4x4 T = truth.MapToTracking;
             var d = new Detections(map.Length);
             for (int f = 0; f < turns.Length; f++)

@@ -15,44 +15,86 @@ namespace StageSettAR
     /// <remarks>
     /// Per camera frame: detect landmarks, solve PnP (seeded with the pose the current alignment
     /// predicts), turn the pose into a map-to-tracking alignment using where the headset says the
-    /// camera was, gate it against the current alignment, and refit a window of recent frames.
-    /// Gravity is shared between map and tracking, so only yaw and translation are estimated per
-    /// alignment. The map's scale is estimated once for the whole session from the history of fixes
-    /// (see <see cref="SessionScaleEstimator"/>), takes headset tracking as the true metres, changes
-    /// slowly, and is not touched while the user stands still.
-    /// <see cref="Fusion.PerFrame"/> skips the gate and the refit and places the map straight from
+    /// camera was, and fit a window of recent frames. Gravity is shared between map and tracking,
+    /// so only yaw and translation are estimated per alignment. The map is placed at scale 1.
+    /// How often this runs depends on the phase (see <see cref="Phase"/>):
+    /// Startup collects fixes until a few agree, then places the map. Early refines the placement with
+    /// every fix until enough of the room has been seen. Late only looks now and then, and refits when the
+    /// map is found to have moved (see <see cref="LocalizerSchedule"/>).
+    /// <see cref="Fusion.PerFrame"/> skips the agreement check, the gate and the refit and places the map straight from
     /// each fix, for comparing against the joint fit.
-    /// In <see cref="Mode.Adaptive"/> (the default) the first few agreeing confident fixes place the map, and every further fix refines it
-    /// at full rate until enough coverage has been seen (head turn or travel, over enough agreeing fixes).
-    /// After that the localizer only refines in short bursts, when time has passed or the user has moved or turned a lot
-    /// (see <see cref="LocalizerSchedule"/>).
     /// </remarks>
     [AddComponentMenu("StageSettAR/STAR Localizer")]
     public sealed class StarLocalizer : MonoBehaviour
     {
-        public enum Mode { OneShot, Periodic, Continuous, Adaptive }
+        public enum Phase { Startup, Early, Late }
         public enum LocalizerState { Idle, Initializing, Localized, Lost, Failed }
         public enum Fusion { Joint, PerFrame }
         // Advanced tuning lives in these groups, which the Inspector shows as collapsed foldouts. The defaults suit a
         // Quest 3 in a room-sized space; most projects never open them.
 
         [Serializable]
-        public sealed class TimingSettings
+        public sealed class StartupSettings
         {
-            [Tooltip("Periodic and Adaptive modes: seconds of rest between refinement bursts. Default 30: the headset's own tracking drifts slowly, so refining twice a minute is plenty.")]
-            public float periodSeconds = 30f;
-            [Tooltip("Periodic and Adaptive modes: how long one burst lasts. Default 3: about a dozen fixes at the default speed, enough to refit.")]
-            public float burstSeconds = 3f;
-            [Tooltip("Adaptive mode only: refine early once the camera has moved this many metres since the last refinement. Default 2: drift shows when the user moves away. 0 turns it off.")]
-            public float refineDistanceMeters = 2f;
-            [Tooltip("Adaptive mode only: refine early once the head has turned this many degrees since the last refinement. Default 60. 0 turns it off.")]
-            public float refineTurnDegrees = 60f;
-            [Tooltip("Most camera frames analysed per second. Default 4: enough for a steady fit and cheap enough to leave the headset's frame rate alone.")]
-            public float maxInferenceHz = 4f;
+            [Tooltip("Look for the room before showing the map. Off: the first confident fix places the map, with no agreement needed.")]
+            public bool enabled = true;
+            [Tooltip("Camera frames analysed per second while the room is being found. Default 4: quick to find the room, cheap enough to leave the headset's frame rate alone.")]
+            public float hz = 4f;
+            [Tooltip("How many confident fixes must agree before the map is first shown (and again after a tracking reset). Default 3: one lucky wrong fix cannot place the map.")]
+            [Range(1, 16)] public int fixesToShow = 3;
             [Tooltip("Give up ('not in this room') if the room is not found within this many seconds of starting. Default 25: long enough to look all around once or twice.")]
             public float failAfterSeconds = 25f;
-            [Tooltip("The room counts as lost after this many seconds without a good fix. Default 15: shorter hiccups (looking at the floor, a dark moment) should not make the map disappear. In Periodic and Adaptive modes only the time spent in bursts counts.")]
-            public float lostAfterSeconds = 15f;
+        }
+
+        [Serializable]
+        public sealed class EarlySettings
+        {
+            [Tooltip("Refine the placement with every fix after the map is shown. Off: go straight to the Late phase.")]
+            public bool enabled = true;
+            [Tooltip("Seconds between analysed frames. Default 0.5: about twice a second is plenty to refine a placement.")]
+            public float intervalSeconds = 0.5f;
+            [Tooltip("The phase ends once at least this many fixes were accepted... Default 4: one wrong fix agreeing with three others by chance is very unlikely.")]
+            public int minFixes = 4;
+            [Tooltip("...spread over a head turn of this many degrees... Default 30: fixes from one direction can share the same mistake; a turn rules that out.")]
+            public float minTurnDeg = 30f;
+            [Tooltip("...or over this many metres of camera travel on the floor. Default 0.5: seen from two places, a wrong match cannot keep agreeing.")]
+            public float minMoveMeters = 0.5f;
+            [Tooltip("A new fix that would move the map by more than this many metres (plus a margin for its own uncertainty) is rejected. Default 0.9: wider than later on, because the first placement may be off by more than drift.")]
+            public float gateMeters = 0.9f;
+            [Tooltip("...or turn it by more than this many degrees. Default 18. Three rejected fixes in a row that agree with each other restart the alignment from them.")]
+            public float gateDegrees = 18f;
+        }
+
+        [Serializable]
+        public sealed class LateSettings
+        {
+            [Tooltip("Keep checking the placement now and then. Off: the localizer stops looking once Early ends, and the map keeps its placement.")]
+            public bool enabled = true;
+            [Tooltip("Check every Interval Seconds.")]
+            public bool useInterval = true;
+            [Tooltip("Seconds between checks. Default 30: the headset's own tracking drifts slowly, so looking twice a minute is plenty.")]
+            public float intervalSeconds = 30f;
+            [Tooltip("Check early once the camera has moved more than Move Meters since the last check.")]
+            public bool useMove = true;
+            [Tooltip("Default 2: drift shows when the user moves away.")]
+            public float moveMeters = 2f;
+            [Tooltip("Check early once the head has turned more than Turn Degrees since the last check.")]
+            public bool useTurn = true;
+            [Tooltip("Default 60.")]
+            public float turnDegrees = 60f;
+            [Tooltip("Camera frames analysed per second during a check. Default 4.")]
+            public float hz = 4f;
+            [Tooltip("A check ends after this many seconds, sooner if enough fixes agree with the placement. Default 3: about a dozen frames at the default rate.")]
+            public float burstSeconds = 3f;
+            [Tooltip("The placement is refitted only if fixes that agree with each other put the map farther than this many metres from it (plus a margin for their own uncertainty). Default 0.05: a smaller shift is not worth moving the map for.")]
+            public float refitMeters = 0.05f;
+            [Tooltip("...or turned it by more than this many degrees. Default 2.")]
+            public float refitDegrees = 2f;
+        }
+
+        [Serializable]
+        public sealed class TimingSettings
+        {
             [Tooltip("Seconds a corrected map position takes to slide into place (about 95 % of the way). Default 0.5: quick enough to follow, slow enough that nobody sees a jump.")]
             public float glideSeconds = 0.5f;
             [Tooltip("Slide every map move into place over Glide Seconds. Default on: refinements are not seen as jumps. Off: every move is applied at once. A move after tracking was reset always snaps.")]
@@ -66,28 +108,12 @@ namespace StageSettAR
         [Serializable]
         public sealed class GatingSettings
         {
-            [Tooltip("Adaptive mode only: how many confident fixes must agree before the map is first shown (and again after a tracking reset). Default 3: one lucky wrong fix cannot place the map. 1 shows it at the first confident fix.")]
-            [Range(1, 16)] public int fixesToShow = 3;
-            [Tooltip("OneShot, Periodic and Continuous modes: ask the user to look around before trusting the room. Default on: one lucky wrong fix could otherwise put the map in the wrong place. Off: the first accepted fix is used.")]
-            public bool requireLookAround = true;
-            [Tooltip("The agreeing fixes must all arrive within this many seconds. Default 10: enough time for a slow look around. Adaptive mode: the same window for the fixes that show the map.")]
-            public float lookAroundSeconds = 10f;
-            [Tooltip("How many separate fixes must agree. Default 4: one wrong fix agreeing with three others by chance is very unlikely. Adaptive mode: fixes needed before the map counts as converged.")]
-            public int minFixes = 4;
-            [Tooltip("How far the head must turn during those fixes, in degrees. Default 30: fixes from one direction can share the same mistake; a turn rules that out. Adaptive mode: turn or travel is enough to converge.")]
-            public float minTurnDeg = 30f;
-            [Tooltip("Adaptive mode only: the camera travelling this many metres during the agreeing fixes counts as much as a head turn. Default 0.5: seen from two places, a wrong match cannot keep agreeing.")]
-            public float minMoveMeters = 0.5f;
+            [Tooltip("Fixes less confident than this (0 to 1) are ignored. Default 0.5: drops guesses made from too few landmarks.")]
+            [Range(0f, 1f)] public float minConfidence = 0.5f;
             [Tooltip("Two fixes agree if the map lands within this many metres of each other... Default 0.1: well above normal noise (a few centimetres), well below a wrong match.")]
             public float agreementMeters = 0.1f;
             [Tooltip("...and within this many degrees of turn. Default 3: the same reasoning for angle.")]
             public float agreementDegrees = 3f;
-            [Tooltip("Fixes less confident than this (0 to 1) are ignored. Default 0.5: drops guesses made from too few landmarks.")]
-            [Range(0f, 1f)] public float minConfidence = 0.5f;
-            [Tooltip("Once found, a new fix that would move the map by more than this many metres (plus a margin for its own uncertainty) is rejected. Default 0.3: real drift is small, so a bigger move is a bad fix. Adaptive mode allows three times as much until converged.")]
-            public float gateMeters = 0.3f;
-            [Tooltip("...or turn it by more than this many degrees. Default 6. Three rejected fixes in a row that agree with each other restart the alignment from them.")]
-            public float gateDegrees = 6f;
             [Tooltip("If the headset moves farther than this many metres from one rendered frame to the next, its tracking was reset and the map is found again. Default 1.5: no person moves that far in one frame.")]
             public float trackingJumpMeters = 1.5f;
         }
@@ -111,7 +137,7 @@ namespace StageSettAR
         public sealed class DebugSettings
         {
             [Tooltip("Joint: combine recent fixes with headset tracking, reject outliers and glide the map into place. Steady; use this.\n\n" +
-                     "Per Frame: put the map exactly where each single camera frame says, with no agreement check, look-around, gate, scale or smoothing. " +
+                     "Per Frame: put the map exactly where each single camera frame says, with no agreement check, gate or smoothing, and the Early phase never ends. " +
                      "Jittery and can jump to a wrong fix; useful for seeing what one frame gets on its own.")]
             public Fusion fusion = Fusion.Joint;
         }
@@ -128,19 +154,19 @@ namespace StageSettAR
         [Tooltip("Keep the map root's children inactive until the first localization, so nothing appears in the wrong place.")]
         public bool hideUntilLocalized = true;
 
-        [Header("Mode")]
-        [Tooltip("Adaptive (the default): place the map once a few good fixes agree, refine at full rate until enough of the room has been seen, then refine in short bursts " +
-                 "every so often or when the user has moved or turned a lot. OneShot: localize once, then stop. Periodic: short refinement bursts on a timer. Continuous: never stop.")]
-        public Mode mode = Mode.Adaptive;
+        [Header("Phases")]
+        [Tooltip("Finding the room: the map stays hidden until a few confident fixes agree, then it is placed and shown.")]
+        public StartupSettings startup = new StartupSettings();
+        [Tooltip("Right after the map is shown: every fix refines the placement, until enough of the room has been seen.")]
+        public EarlySettings early = new EarlySettings();
+        [Tooltip("Afterwards: a short check now and then, which refits the placement only if the map has moved.")]
+        public LateSettings late = new LateSettings();
 
         [Header("Tuning (optional)")]
-        [Tooltip("How often to look, when to give up, and how fast corrections glide in.")]
+        [Tooltip("How fast corrections glide in.")]
         public TimingSettings timing = new TimingSettings();
-        [Tooltip("How many fixes must agree before the room is trusted, and which new fixes are rejected afterwards.")]
+        [Tooltip("Which fixes are trusted and when tracking counts as reset.")]
         public GatingSettings gating = new GatingSettings();
-        [Tooltip("The map's scale error, estimated over the whole session from how far the headset travelled against how far the fixes say it travelled. " +
-                 "It changes slowly and only after enough walking; standing still or turning on the spot never changes it. Joint fusion only. Turn Enabled off to keep the map at exactly 1 unit per metre.")]
-        public SessionScaleSettings sessionScale = new SessionScaleSettings();
         [Tooltip("Rarely needed: the network backend, pose solver and alignment fit.")]
         public AdvancedSettings advanced = new AdvancedSettings();
         [Tooltip("For comparing against the default fusion.")]
@@ -151,125 +177,26 @@ namespace StageSettAR
         public UnityEvent onLocalizing = new UnityEvent();
         [Tooltip("Starts the first time the room is found, and only that once. The place to hook up an intro: a fade, a reveal, a sound.")]
         public UnityEvent onFirstLocalized = new UnityEvent();
-        [Tooltip("Starts every time the room is found, including after it was lost.")]
+        [Tooltip("Starts every time the room is found, including after tracking came back and the placement was kept.")]
         public UnityEvent onLocalized = new UnityEvent();
-        [Tooltip("Starts when enough of the room has been seen for the placement to be trusted (Adaptive mode), or together with On Localized in the other modes. " +
-                 "Starts again after the room was lost and found again, and in Adaptive mode after a re-seed, which restarts the confirmation (with a small Min Fixes that can be at once).")]
-        public UnityEvent onConverged = new UnityEvent();
-        [Tooltip("Starts when the headset was localized and then lost the room.")]
+        [Tooltip("Starts when enough of the room has been seen for the placement to be trusted and the Late phase begins (at once when Early is off). " +
+                 "Starts again after the map was placed anew, and after a re-seed restarted the Early phase.")]
+        public UnityEvent onSettled = new UnityEvent();
+        [Tooltip("Starts when the map was shown and the device then lost tracking (its own tracking was lost, the headset was taken off, or tracking was reset). Nothing is inferred until tracking is back.")]
         public UnityEvent onLost = new UnityEvent();
         [Tooltip("Starts when the localizer gives up. Passes a short reason.")]
         public UnityEvent<string> onFailed = new UnityEvent<string>();
         [Tooltip("Starts on every change of state (Idle, Initializing, Localized, Lost, Failed) and passes the new state.")]
         public UnityEvent<LocalizerState> onStateChanged = new UnityEvent<LocalizerState>();
 
+        /// <summary>Initializing is the Startup phase before the first placement. Lost is the device having no tracking, or just having had it reset.</summary>
         public LocalizerState State { get; private set; }
+        public Phase CurrentPhase => _schedule.Phase;
         /// <summary>The alignment the map root is gliding to (map to tracking space). Invalid until localized, and again
         /// after a tracking reset until the next fix, since the old one no longer describes the tracking space.</summary>
         public Alignment CurrentAlignment => _placed ? _target : default;
         /// <summary>Confidence of the last accepted fix.</summary>
         public float LastConfidence { get; private set; }
-
-        /// <summary>The raw session scale estimate (tracking metres per map unit); the prior until <see cref="ScaleObservable"/>.</summary>
-        public float ScaleEstimate => _scale != null ? (float)_scale.Scale : sessionScale.priorScale;
-        /// <summary>The scale in use: the estimate, rate-limited and clamped.</summary>
-        public float AppliedScale => _scale != null ? (float)_scale.AppliedScale : sessionScale.priorScale;
-        /// <summary>Approximate standard deviation of <see cref="ScaleEstimate"/>. Infinity until something is known.</summary>
-        public float ScaleSigma => _scale != null ? (float)_scale.ScaleSigma : float.PositiveInfinity;
-        /// <summary>True once the headset has travelled far enough, over enough fixes, for the scale to be told.</summary>
-        public bool ScaleObservable => _scale != null && _scale.IsObservable;
-
-        // ---- search progress, for a UI that shows how close the room is to being found ----
-
-        /// <summary>True when the Adaptive behaviour is in effect. Adaptive needs the joint fit, and Per Frame has no fit to
-        /// converge, so with Per Frame fusion the Adaptive mode behaves like Continuous and this is false.</summary>
-        public bool IsAdaptive => mode == Mode.Adaptive && debug.fusion == Fusion.Joint;
-
-        /// <summary>True once enough of the room has been seen for the placement to be trusted. In Adaptive mode that is
-        /// coverage (see <see cref="CoverageProgress"/>); in the other modes it is true as soon as the room is found.
-        /// False again after the room is lost.</summary>
-        public bool IsConverged => _converged;
-
-        /// <summary>How many recent fixes agree with each other so far (Adaptive: before the first placement the same, after it the accepted fixes since then).</summary>
-        public int AgreeingFixes
-        {
-            get
-            {
-                if (IsAdaptive && _placed) return _coverage.Count;
-                RefreshProgress();
-                return _agreeing;
-            }
-        }
-
-        /// <summary>How many agreeing fixes are needed before the room counts as found (Adaptive: before the first placement
-        /// <c>fixesToShow</c>, after it as many as are needed to converge).</summary>
-        public int FixesNeeded
-        {
-            get
-            {
-                if (AwaitingShow) return Math.Max(1, gating.fixesToShow);
-                bool lookAround = debug.fusion == Fusion.Joint && gating.requireLookAround;
-                return IsAdaptive || lookAround ? Math.Max(1, gating.minFixes) : 1;
-            }
-        }
-
-        /// <summary>How far the head has turned across the agreeing fixes, in degrees.</summary>
-        public float TurnDegrees
-        {
-            get
-            {
-                if (IsAdaptive) return _placed ? _coverage.TurnDegrees : 0f;
-                RefreshProgress();
-                return _turnDeg;
-            }
-        }
-
-        /// <summary>Agreeing fixes so far compared with what is needed, 0 to 1.</summary>
-        public float FixesProgress
-        {
-            get
-            {
-                if (Done) return 1f;
-                if (IsAdaptive && !AwaitingShow) return _coverage.FixesProgress(gating.minFixes);
-                return Mathf.Clamp01(AgreeingFixes / (float)FixesNeeded);
-            }
-        }
-
-        /// <summary>Head turn so far compared with what is needed, 0 to 1. Always 1 when the look-around is not required.
-        /// In Adaptive mode the camera travelling far enough counts as well.</summary>
-        public float TurnProgress
-        {
-            get
-            {
-                if (Done || debug.fusion == Fusion.PerFrame) return 1f;
-                if (IsAdaptive) return _coverage.SpreadProgress(gating.minTurnDeg, gating.minMoveMeters);
-                if (!gating.requireLookAround || gating.minTurnDeg <= 0f) return 1f;
-                return Mathf.Clamp01(TurnDegrees / gating.minTurnDeg);
-            }
-        }
-
-        /// <summary>One number, 0 to 1, for a progress bar while the room is being found: the average of fix progress and turn progress.
-        /// 1 once localized. In Adaptive mode it is the agreeing fixes towards <c>fixesToShow</c> before the first placement, so use <see cref="CoverageProgress"/> for the refinement after it.</summary>
-        public float SearchProgress
-        {
-            get
-            {
-                if (State == LocalizerState.Localized) return 1f;
-                if (IsAdaptive) return AwaitingShow ? FixesProgress : 0f;
-                return 0.5f * (FixesProgress + TurnProgress);
-            }
-        }
-
-        /// <summary>One number, 0 to 1, for how much of the room has been covered since the map was placed. 1 once <see cref="IsConverged"/>, 0 before the first placement.</summary>
-        public float CoverageProgress
-        {
-            get
-            {
-                if (_converged) return 1f;
-                if (State != LocalizerState.Localized) return 0f;
-                return 0.5f * (FixesProgress + TurnProgress);
-            }
-        }
 
         /// <summary>Seconds left before the localizer gives up and fails. 0 when it is not in the initial search.</summary>
         public float SecondsUntilGiveUp
@@ -277,27 +204,26 @@ namespace StageSettAR
             get
             {
                 if (State != LocalizerState.Initializing) return 0f;
-                if (_initStart < 0) return timing.failAfterSeconds;
-                return Mathf.Max(0f, timing.failAfterSeconds - (float)(Time.realtimeSinceStartupAsDouble - _initStart));
+                if (_initStart < 0) return startup.failAfterSeconds;
+                return Mathf.Max(0f, startup.failAfterSeconds - (float)(Time.realtimeSinceStartupAsDouble - _initStart));
             }
         }
 
         // det holds only the PnP inliers (copied: detection buffers are reused), so a consensus can seed the solver later.
-        struct Candidate { public Alignment a; public Pose cam; public Vector3 mapPos; public float sigma; public double time; public Detections det; }
+        struct Candidate { public Alignment a; public Pose cam; public double time; public Detections det; }
         sealed class PnpWork
         {
             public StarPnp solver; public Vector3d[] p3; public Vector2d[] p2; public double[] score;
         }
 
-        const int MaxCandidates = 32, RejectsToReseed = 3;
-        const float ConvergingGateFactor = 3f;   // Adaptive: how much wider the gate is until converged
+        const int MaxCandidates = 32;
+        const int ConsistentFixes = 3;           // fixes in a row that must agree to re-seed (Early) or refit (Late)
+        const double CandidateSeconds = 10.0;    // fixes that are to agree must all be this recent
         const double FrameGapSeconds = 2.0;      // frames farther apart than this are not compared for a tracking jump
 
         StarDetector _detector;
         StarMap _detectorMap; // the map _detector was built for: its network and landmark count
         AlignmentSolver _solver;
-        SessionScaleEstimator _scale;
-        StarMap _scaleMap;   // the map _scale was learned on
         CancellationTokenSource _cts;
         Vector3d[] _exportLandmarks;
         Vector3 _centroid;
@@ -307,7 +233,7 @@ namespace StageSettAR
         readonly List<GameObject> _hidden = new List<GameObject>();
         long _lastId;
         double _initStart;
-        bool _resume, _converged;
+        bool _resume;
         readonly LocalizerSchedule _schedule = new LocalizerSchedule();
         readonly CoverageTracker _coverage = new CoverageTracker();
         int _epoch;   // changes when the alignment is discarded, so a frame that was being analysed at the time is dropped
@@ -317,22 +243,19 @@ namespace StageSettAR
         int _rejects, _initFixes;
         Alignment _lastReject;
         bool _everLocalized;
-        int _agreeing, _progressFrame = -1;
-        float _turnDeg;
 
         Transform Root => mapRoot ? mapRoot : transform;
 
-        // Adaptive: the map is not shown yet (start-up, or after a tracking reset), so fixes are collected until enough agree.
-        bool AwaitingShow => IsAdaptive && !_placed;
-
-        bool Done => IsAdaptive ? _converged : State == LocalizerState.Localized;
+        // How many agreeing fixes the next placement or refit needs.
+        int FixesNeeded => CurrentPhase == Phase.Late ? ConsistentFixes : startup.enabled ? Math.Max(1, startup.fixesToShow) : 1;
 
         ScheduleSettings ScheduleNow => new ScheduleSettings
         {
-            mode = mode == Mode.Adaptive && !IsAdaptive ? Mode.Continuous : mode,
-            maxInferenceHz = timing.maxInferenceHz, periodSeconds = timing.periodSeconds, burstSeconds = timing.burstSeconds,
-            refineDistanceMeters = timing.refineDistanceMeters, refineTurnDegrees = timing.refineTurnDegrees,
-            lostAfterSeconds = timing.lostAfterSeconds, trackingJumpMeters = gating.trackingJumpMeters,
+            startupHz = startup.hz,
+            earlyEnabled = early.enabled, earlyIntervalSeconds = early.intervalSeconds,
+            lateEnabled = late.enabled, lateByTime = late.useInterval, lateByMove = late.useMove, lateByTurn = late.useTurn,
+            lateIntervalSeconds = late.intervalSeconds, lateMoveMeters = late.moveMeters, lateTurnDegrees = late.turnDegrees,
+            lateBurstSeconds = late.burstSeconds, lateHz = late.hz,
         };
 
         void Reset() { mapRoot = transform; }
@@ -347,8 +270,7 @@ namespace StageSettAR
             _resume = false;
             if (State == LocalizerState.Failed) return;
             if (State != LocalizerState.Localized) { StartLocalization(); return; }
-            if (mode == Mode.OneShot) return;
-            _schedule.Reset();   // the time spent disabled is not time without a fix
+            _schedule.Resume();
             _cts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
             _ = Run(_cts.Token);
         }
@@ -372,8 +294,7 @@ namespace StageSettAR
         // ------------------------------------------------------------------ public control
 
         /// <summary>
-        /// (Re)starts localization from scratch: forgets the fit, keeps the map where it is until a new one is found.
-        /// The session scale is kept (it belongs to the map and the headset, not to one alignment) unless the map changed.
+        /// (Re)starts localization from scratch in the Startup phase: forgets the fit, keeps the map where it is until a new one is found.
         /// </summary>
         public void StartLocalization()
         {
@@ -392,35 +313,15 @@ namespace StageSettAR
             _cts?.Cancel();
             _cts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
             _solver = new AlignmentSolver(advanced.alignment, map);
-            if (_scale == null || _scaleMap != map) { _scale = new SessionScaleEstimator(sessionScale); _scaleMap = map; }
-            else _scale.BeginSegment();
-            _solver.SetScale(_scale.AppliedScale);
-            _current = default; _cands.Clear(); _rejects = 0; _initFixes = 0; _progressFrame = -1;
+            _current = default; _cands.Clear(); _rejects = 0; _initFixes = 0;
             _initStart = -1; _schedule.Reset(); _epoch++;
-            _converged = false; _coverage.Reset();
+            _coverage.Reset();
             _centroid = Vector3.zero;
             foreach (var p in map.LandmarksUnity) _centroid += p;
             if (map.LandmarkCount > 0) _centroid /= map.LandmarkCount;
             if (hideUntilLocalized && !_placed) HideChildren();
             SetState(LocalizerState.Initializing);
             _ = Run(_cts.Token);
-        }
-
-        /// <summary>
-        /// Forgets the session scale and returns to the prior. The current alignment keeps the map centre where it is
-        /// and takes the prior scale; the next fixes refit it.
-        /// </summary>
-        public void ResetScale()
-        {
-            if (_scale == null) return;
-            _scale.Reset();
-            _cands.Clear();   // their alignments were made at the old scale
-            if (_current.valid)
-            {
-                _current = WithScale(_current, (float)_scale.AppliedScale);
-                _rejects = 0;
-                Place(_current, false);
-            }
         }
 
         /// <summary>Same as <see cref="StartLocalization"/>.</summary>
@@ -471,11 +372,8 @@ namespace StageSettAR
                     double now = Time.realtimeSinceStartupAsDouble;
 
                     if (State == LocalizerState.Failed || State == LocalizerState.Idle) return;
-                    if (State == LocalizerState.Localized && mode == Mode.OneShot) return;
                     ScheduleSettings sched = ScheduleNow;
-                    bool steady = State == LocalizerState.Localized && (!IsAdaptive || _converged);
-                    if (!_schedule.Tick(now, steady, _headPos, _headHeading, sched)) continue;
-                    if (State == LocalizerState.Localized && _schedule.TimedOut(sched)) Lose(now, false);
+                    if (!_schedule.WantsFrames(now, _headPos, _headHeading, sched)) continue;
                     if (!_schedule.ShouldInfer(now) || _detector.Busy || !cameraSource.IsReady) continue;
                     if (!cameraSource.TryGetFrame(_lastId, out CameraFrame frame)) continue;
                     _lastId = frame.id;
@@ -487,7 +385,7 @@ namespace StageSettAR
                     _schedule.OnInferred(now, sched);
                     if (State == LocalizerState.Initializing && _initStart < 0) _initStart = now;
                     // A source that cannot report its pose between frames is watched on the frames it delivers.
-                    if (!cameraSource.TryGetCurrentPose(out _)) SampleHeadFromFrame(frame, now);
+                    if (!cameraSource.TryGetCurrentPose(out _)) SampleHeadFromFrame(frame);
 
                     int epoch = _epoch;
                     _detector.LayersPerFrame = advanced.layersPerFrame;
@@ -498,10 +396,10 @@ namespace StageSettAR
                     await ProcessFrame(work, frame, d, epoch, ct);
                     ct.ThrowIfCancellationRequested();
 
-                    if (State == LocalizerState.Initializing && now - _initStart > timing.failAfterSeconds)
+                    if (State == LocalizerState.Initializing && now - _initStart > startup.failAfterSeconds)
                         Fail(_initFixes == 0
                             ? "Not in this room: no known landmarks were recognised."
-                            : "Not in this room: the landmark fixes never agreed" + (gating.requireLookAround && !IsAdaptive ? " (or the headset was not turned enough)." : "."));
+                            : "Not in this room: the landmark fixes never agreed.");
                 }
             }
             catch (OperationCanceledException) { }
@@ -512,9 +410,10 @@ namespace StageSettAR
             }
         }
 
-        // A frame is dropped if the alignment was discarded while it was analysed, or if it was captured before tracking
-        // was reset (its pose is in the old tracking space). A frame captured after the reset is good for the new alignment.
-        bool IsStale(int epoch, in CameraFrame frame) => epoch != _epoch || _schedule.PredatesJump(frame.timestamp);
+        // A frame is dropped if the alignment was discarded while it was analysed, if tracking went away meanwhile, or if it
+        // was captured before tracking was reset (its pose is in the old tracking space). A frame captured after the reset
+        // is good for the new alignment.
+        bool IsStale(int epoch, in CameraFrame frame) => epoch != _epoch || _schedule.TrackingLost || _schedule.PredatesJump(frame.timestamp);
 
         async Awaitable ProcessFrame(PnpWork w, CameraFrame frame, Detections d, int epoch, CancellationToken ct)
         {
@@ -537,118 +436,89 @@ namespace StageSettAR
             if (!r.success || r.confidence < gating.minConfidence) return;
 
             Pose cameraInMap = Conventions.OpenCvCameraToUnity(r.R * turn.Transpose(), r.t);
-            // Fixes are compared at the scale in use (Joint); Per Frame leaves the map at its own scale.
-            Alignment a = AlignmentSolver.FromSingleFix(cameraInMap, frame.cameraPose, debug.fusion == Fusion.Joint ? (float)_scale.AppliedScale : 1f);
+            Alignment a = AlignmentSolver.FromSingleFix(cameraInMap, frame.cameraPose);
             a.positionSigma = (float)r.positionSigma; a.yawSigmaDeg = (float)r.rotationSigmaDeg;
             LastConfidence = (float)r.confidence;
 
             if (debug.fusion == Fusion.PerFrame)
             {
                 _current = a;
-                _schedule.FixAccepted();
                 _initFixes++;
                 Place(a, true);
-                if (State != LocalizerState.Localized) Found(now);
+                if (State != LocalizerState.Localized) Found();
                 return;
             }
 
-            if (_current.valid)
+            if (!_current.valid)
             {
-                // Until converged (Adaptive) the placement may be off by more than drift, so the gate is wider; wild fixes still fail it.
-                if (WithinGate(_current, a, IsAdaptive && !_converged ? ConvergingGateFactor : 1f))
+                // Startup: collect fixes and look for a consensus. They are not in the solver window yet, because frames
+                // from a wrong (non-consensus) cluster would pollute the first Solve.
+                _initFixes++;
+                AddCandidate(w, frame, d, a, now);
+                if (TryConsensus(out Alignment seed))
                 {
-                    _rejects = 0;
-                    _solver.AddFrame(d, w.solver.InlierMask, frame.cameraPose, now);
-                    _scale.Add(new Vector3d(cameraInMap.position), new Vector3d(frame.cameraPose.position), _current.yawDeg, a.positionSigma);
-                    _scale.Advance(now);
-                    // A changed scale is solved into the window too, which pivots the map about where the user has been.
-                    Alignment fit = SolveWindow(_current);
-                    if (fit.valid) { _current = fit; Place(fit, false); }
-                    _schedule.FixAccepted();
-                    if (IsAdaptive) AddCoverage(frame.cameraPose);
+                    PlaceFromCluster(seed);
+                    Found();
                 }
-                else
-                {
-                    // Consecutive rejects that agree with each other mean the old alignment is stale.
-                    _rejects = _rejects > 0 && Agree(_lastReject, a) ? _rejects + 1 : 1;
-                    _lastReject = a;
-                    if (_rejects >= RejectsToReseed) ReseedFrom(w, frame, d, a, cameraInMap.position, now);
-                }
-                return;
             }
-
-            _schedule.FixAccepted();
-            _initFixes++;
-            if (IsAdaptive && _placed)
-            {
-                // Lost by timeout (or a restart): the map is still shown, so the first confident fix corrects it. The single fix is
-                // protected by the confidence threshold, the wide gate and the re-seed after three agreeing rejects.
-                SeedFrom(w, frame, d, a, cameraInMap.position, now);
-                Place(_current, !_visible || !_placed);
-                _rejects = 0;
-                Found(now);
-                AddCoverage(frame.cameraPose);
-                return;
-            }
-
-            // Initializing / Lost: collect fixes and look for a consensus (Adaptive: before the map is first shown, without a turn).
-            // Not yet in the solver window: frames from a wrong (non-consensus) cluster would pollute the first Solve.
-            _cands.Add(new Candidate
-            {
-                a = a, cam = frame.cameraPose, mapPos = cameraInMap.position, sigma = a.positionSigma,
-                time = now, det = CopyInliers(d, w.solver.InlierMask),
-            });
-            _cands.RemoveAll(c => c.time < now - gating.lookAroundSeconds);
-            if (_cands.Count > MaxCandidates) _cands.RemoveAt(0);
-            if (TryConsensus(out Alignment seed))
-            {
-                // Rebuild the window from the consensus cluster only.
-                _solver.Clear();
-                _scale.BeginSegment();
-                foreach (var c in _cands)
-                {
-                    if (!Agree(seed, c.a)) continue;
-                    _solver.AddFrame(c.det, null, c.cam, c.time);
-                    _scale.Add(new Vector3d(c.mapPos), new Vector3d(c.cam.position), seed.yawDeg, c.sigma);
-                    if (IsAdaptive) _coverage.Add(c.cam.position, Heading(c.cam));   // the fixes that placed the map count as covered
-                }
-                _scale.Advance(now);
-                Alignment fit = SolveWindow(seed);
-                _current = fit.valid ? fit : seed;
-                _cands.Clear();
-                bool snap = !_visible || !_placed;
-                Place(_current, snap);
-                _rejects = 0;
-                Found(now);
-                if (IsAdaptive) CheckConverged();
-            }
+            else if (CurrentPhase == Phase.Late) CheckPlacement(w, frame, d, a, now);
+            else RefinePlacement(w, frame, d, a, now);
         }
 
-        void Found(double now)
+        // Early: every fix inside the gate refines the placement. Fixes outside it are rejected, until three in a row agree
+        // with each other: then the old alignment is stale and the fit starts again from them.
+        void RefinePlacement(PnpWork w, CameraFrame frame, Detections d, Alignment a, double now)
+        {
+            if (PlacementCheck.Beyond(_current, a, _centroid, early.gateMeters, early.gateDegrees))
+            {
+                _rejects = _rejects > 0 && Agree(_lastReject, a) ? _rejects + 1 : 1;
+                _lastReject = a;
+                if (_rejects >= ConsistentFixes) ReseedFrom(w, frame, d, a, now);
+                return;
+            }
+            _rejects = 0;
+            _solver.AddFrame(d, w.solver.InlierMask, frame.cameraPose, now);
+            Alignment fit = _solver.Solve(_current);
+            if (fit.valid) { _current = fit; Place(fit, false); }
+            AddCoverage(frame.cameraPose);
+        }
+
+        // Late: a fix that agrees with the placement leaves it alone. Fixes that disagree are collected, and only when
+        // enough of them agree with each other is the map taken to have moved and refitted from them.
+        void CheckPlacement(PnpWork w, CameraFrame frame, Detections d, Alignment a, double now)
+        {
+            bool deviates = PlacementCheck.Beyond(_current, a, _centroid, late.refitMeters, late.refitDegrees);
+            _schedule.CheckedFix(!deviates, ConsistentFixes);
+            if (!deviates) { _cands.Clear(); return; }
+            AddCandidate(w, frame, d, a, now);
+            if (!TryConsensus(out Alignment seed)) return;
+            PlaceFromCluster(seed);
+            _schedule.EndCheck();
+        }
+
+        void Found()
         {
             ShowChildren();
             SetState(LocalizerState.Localized);
             onLocalized.Invoke();
             if (!_everLocalized) { _everLocalized = true; onFirstLocalized.Invoke(); }
-            if (!IsAdaptive) SetConverged();   // the look-around consensus already is the convergence
+            _schedule.Enter(LocalizerSchedule.AfterPlacement(ScheduleNow));
+            if (CurrentPhase == Phase.Late) onSettled.Invoke();
+            else CheckSettled();
         }
 
         void AddCoverage(in Pose camera)
         {
             _coverage.Add(camera.position, Heading(camera));
-            CheckConverged();
+            CheckSettled();
         }
 
-        void CheckConverged()
+        // Early ends once the accepted fixes cover enough of the room.
+        void CheckSettled()
         {
-            if (_coverage.IsComplete(gating.minFixes, gating.minTurnDeg, gating.minMoveMeters)) SetConverged();
-        }
-
-        void SetConverged()
-        {
-            if (_converged) return;
-            _converged = true;
-            onConverged.Invoke();
+            if (CurrentPhase != Phase.Early || !_coverage.IsComplete(early.minFixes, early.minTurnDeg, early.minMoveMeters)) return;
+            _schedule.Enter(Phase.Late);
+            onSettled.Invoke();
         }
 
         static Detections CopyInliers(Detections d, bool[] mask)
@@ -663,46 +533,42 @@ namespace StageSettAR
             return c;
         }
 
-        /// <summary>Starts a new fit from this one frame: <see cref="_current"/> becomes the alignment to place.</summary>
-        void SeedFrom(PnpWork w, CameraFrame frame, Detections d, Alignment a, Vector3 mapPos, double now)
+        void AddCandidate(PnpWork w, CameraFrame frame, Detections d, Alignment a, double now)
+        {
+            _cands.Add(new Candidate { a = a, cam = frame.cameraPose, time = now, det = CopyInliers(d, w.solver.InlierMask) });
+            _cands.RemoveAll(c => c.time < now - CandidateSeconds);
+            if (_cands.Count > MaxCandidates) _cands.RemoveAt(0);
+        }
+
+        /// <summary>Fits the window to the fixes that agree with <paramref name="seed"/> alone, and places the result.</summary>
+        void PlaceFromCluster(in Alignment seed)
         {
             _solver.Clear();
-            _scale.BeginSegment();
-            _solver.AddFrame(d, w.solver.InlierMask, frame.cameraPose, now);
-            _scale.Add(new Vector3d(mapPos), new Vector3d(frame.cameraPose.position), a.yawDeg, a.positionSigma);
-            _scale.Advance(now);
-            Alignment fit = SolveWindow(a);
-            _current = fit.valid ? fit : a;
+            foreach (var c in _cands)
+            {
+                if (!Agree(seed, c.a)) continue;
+                _solver.AddFrame(c.det, null, c.cam, c.time);
+                if (CurrentPhase == Phase.Startup) _coverage.Add(c.cam.position, Heading(c.cam));   // the fixes that placed the map count as covered
+            }
+            Alignment fit = _solver.Solve(seed);
+            _current = fit.valid ? fit : seed;
+            _cands.Clear();
+            Place(_current, !_visible || !_placed);
+            _rejects = 0;
         }
 
-        void ReseedFrom(PnpWork w, CameraFrame frame, Detections d, Alignment a, Vector3 mapPos, double now)
+        void ReseedFrom(PnpWork w, CameraFrame frame, Detections d, Alignment a, double now)
         {
             Debug.Log("[StageSettAR] Fixes consistently disagree with the current alignment; re-seeding from them.");
-            SeedFrom(w, frame, d, a, mapPos, now);
+            _solver.Clear();
+            _solver.AddFrame(d, w.solver.InlierMask, frame.cameraPose, now);
+            Alignment fit = _solver.Solve(a);
+            _current = fit.valid ? fit : a;
             Place(_current, false);
             _rejects = 0;
-            _schedule.FixAccepted();
-            if (!IsAdaptive) return;
-            // A restarted fit has to be confirmed again, at full rate.
-            _converged = false;
+            // A restarted fit has to be confirmed again, at the Early rate.
             _coverage.Reset();
             AddCoverage(frame.cameraPose);
-        }
-
-        /// <summary>Refits the window at the scale in use.</summary>
-        Alignment SolveWindow(in Alignment initial)
-        {
-            _solver.SetScale(_scale.AppliedScale);
-            return _solver.Solve(initial);
-        }
-
-        /// <summary>The same alignment at another scale, with the landmark centroid left where it was.</summary>
-        Alignment WithScale(in Alignment a, float scale)
-        {
-            Alignment b = a;
-            b.translation += (a.scale - scale) * (Quaternion.Euler(0f, a.yawDeg, 0f) * _centroid);
-            b.scale = scale;
-            return b;
         }
 
         /// <summary>Writes the 2D-3D pairs of <paramref name="d"/> (export-frame landmark, network pixel, score) into the solver's input arrays.</summary>
@@ -732,39 +598,17 @@ namespace StageSettAR
             return r;
         }
 
-        // ------------------------------------------------------------------ agreement and gating
+        // ------------------------------------------------------------------ agreement
 
-        /// <summary>How far apart two alignments put the map: the landmark centroid's shift and the yaw difference.</summary>
-        void Difference(in Alignment a, in Alignment b, out float meters, out float degrees)
-        {
-            meters = (a.MapToTracking.MultiplyPoint3x4(_centroid) - b.MapToTracking.MultiplyPoint3x4(_centroid)).magnitude;
-            degrees = Mathf.Abs(Mathf.DeltaAngle(a.yawDeg, b.yawDeg));
-        }
+        bool Agree(in Alignment a, in Alignment b) =>
+            PlacementCheck.Agree(a, b, _centroid, gating.agreementMeters, gating.agreementDegrees);
 
-        bool Agree(in Alignment a, in Alignment b)
-        {
-            Difference(a, b, out float m, out float deg);
-            return m <= gating.agreementMeters && deg <= gating.agreementDegrees;
-        }
-
-        bool WithinGate(in Alignment cur, in Alignment fix, float factor)
-        {
-            Difference(cur, fix, out float m, out float deg);
-            return m <= gating.gateMeters * factor + 3f * (Known(cur.positionSigma) + Known(fix.positionSigma))
-                && deg <= gating.gateDegrees * factor + 3f * (Known(cur.yawSigmaDeg) + Known(fix.yawSigmaDeg));
-        }
-
-        // A solve whose covariance could not be inverted reports an infinite sigma. Unknown must not widen the gate
-        // to accept anything, so it falls back to the fixed part of the gate.
-        static float Known(float sigma) => float.IsFinite(sigma) ? sigma : 0f;
-
-        /// <summary>Largest group of mutually agreeing fixes (around the best medoid), plus a head turn if required (never in Adaptive mode, where the turn is a later step).</summary>
+        /// <summary>Largest group of mutually agreeing fixes (around the best medoid), if it is big enough.</summary>
         bool TryConsensus(out Alignment seed)
         {
             seed = default;
             int best = BestCluster(out int bestCount);
             if (best < 0 || bestCount < FixesNeeded) return false;
-            if (gating.requireLookAround && !IsAdaptive && ClusterTurn(best) < gating.minTurnDeg) return false;
             seed = _cands[best].a;
             return true;
         }
@@ -783,34 +627,6 @@ namespace StageSettAR
             return best;
         }
 
-        /// <summary>Largest head yaw difference between two fixes of the cluster around candidate <paramref name="best"/>.</summary>
-        float ClusterTurn(int best)
-        {
-            float maxTurn = 0f;
-            for (int i = 0; i < _cands.Count; i++)
-            {
-                if (!Agree(_cands[best].a, _cands[i].a)) continue;
-                for (int j = i + 1; j < _cands.Count; j++)
-                    if (Agree(_cands[best].a, _cands[j].a))
-                        maxTurn = Mathf.Max(maxTurn, Mathf.Abs(Mathf.DeltaAngle(Heading(_cands[i].cam), Heading(_cands[j].cam))));
-            }
-            return maxTurn;
-        }
-
-        /// <summary>
-        /// Recomputes the progress numbers at most once per frame. Fixes older than the look-around
-        /// window are dropped first, exactly as the next fix would drop them, so a UI does not show
-        /// agreement that has already expired.
-        /// </summary>
-        void RefreshProgress()
-        {
-            if (_progressFrame == Time.frameCount) return;
-            _progressFrame = Time.frameCount;
-            _cands.RemoveAll(c => c.time < Time.realtimeSinceStartupAsDouble - gating.lookAroundSeconds);
-            int best = BestCluster(out _agreeing);
-            _turnDeg = best >= 0 && gating.requireLookAround && !IsAdaptive ? ClusterTurn(best) : 0f;
-        }
-
         static float Heading(Pose p) => Heading(p.rotation * Vector3.forward);
 
         static float Heading(Vector3 f)
@@ -820,19 +636,51 @@ namespace StageSettAR
 
         // ------------------------------------------------------------------ state
 
-        void Lose(double now, bool discontinuity)
+        // Tracking was reset, so the old alignment describes a tracking space that no longer exists. Back to Startup, with
+        // the map hidden until it is placed again. After a jump, frames captured before it are told apart by their capture
+        // time; otherwise the ones being analysed now are dropped by epoch.
+        void RestartStartup(bool jump)
         {
-            if (State == LocalizerState.Localized) { SetState(LocalizerState.Lost); onLost.Invoke(); }
-            _current = default; _cands.Clear(); _rejects = 0; _progressFrame = -1;
-            if (!discontinuity) _epoch++;   // after a tracking reset, frames are told apart by their capture time instead
-            _converged = false; _coverage.Reset();   // the next alignment is a new fit and has to be confirmed again
+            _current = default; _cands.Clear(); _rejects = 0;
+            if (!jump) _epoch++;
+            _coverage.Reset();
             _solver.Clear();
-            _scale.BeginSegment();   // the next alignment is a new fit; the scale itself stays
-            if (discontinuity)
+            if (hideUntilLocalized) HideChildren();
+            _placed = false;   // snap to the new alignment instead of gliding from a stale one
+            _initStart = -1;
+            _schedule.Enter(Phase.Startup);
+            SetState(LocalizerState.Initializing);
+        }
+
+        // A jump means the headset's tracking was reset: the same as tracking coming back after a loss.
+        void OnJump()
+        {
+            LoseTracking();
+            RestartStartup(true);
+        }
+
+        void LoseTracking()
+        {
+            if (State != LocalizerState.Localized) return;
+            SetState(LocalizerState.Lost);
+            onLost.Invoke();
+        }
+
+        // The device's own tracking is the only thing that loses the room: missing fixes just mean nothing gets refined.
+        void UpdateTracking()
+        {
+            switch (_schedule.UpdateTracking(cameraSource.IsTracking, cameraSource.IsWorn))
             {
-                if (hideUntilLocalized) HideChildren();
-                _placed = false;   // snap to the new alignment instead of gliding from a stale one
-                if (State == LocalizerState.Initializing) _initStart = now;
+                case LocalizerSchedule.TrackingChange.Lost:
+                    LoseTracking();
+                    break;
+                case LocalizerSchedule.TrackingChange.Resumed:
+                    _initStart = -1;
+                    if (State == LocalizerState.Lost) { SetState(LocalizerState.Localized); onLocalized.Invoke(); }
+                    break;
+                case LocalizerSchedule.TrackingChange.RestartNeeded:
+                    RestartStartup(false);
+                    break;
             }
         }
 
@@ -874,21 +722,23 @@ namespace StageSettAR
 
         // The fallback for sources without TryGetCurrentPose. A pose from before a rest is too old to compare with,
         // because walking in between is not a tracking reset.
-        void SampleHeadFromFrame(in CameraFrame frame, double now)
+        void SampleHeadFromFrame(in CameraFrame frame)
         {
             _headPos = frame.cameraPose.position;
             _headHeading = Heading(frame.cameraPose);
             _hasHead = true;
-            if (_schedule.TrackJump(_headPos, gating.trackingJumpMeters, frame.timestamp, FrameGapSeconds)) Lose(now, true);
+            if (_schedule.TrackJump(_headPos, gating.trackingJumpMeters, frame.timestamp, FrameGapSeconds)) OnJump();
         }
 
         /// <summary>Every frame, so the map follows XR Origin locomotion (the alignment is in tracking space).</summary>
         void LateUpdate()
         {
             double now = Time.realtimeSinceStartupAsDouble;
+            if (Localizing) UpdateTracking();
             // The jump test looks at every frame, not only the analysed ones, so a long walk never looks like a jump.
-            if (SampleHead() && _schedule.TrackJump(_headPos, gating.trackingJumpMeters, now) && Localizing)
-                Lose(now, true);
+            // A pose reported while tracking is missing means nothing, so it is not sampled.
+            if (!_schedule.TrackingLost && SampleHead() && _schedule.TrackJump(_headPos, gating.trackingJumpMeters, now) && Localizing)
+                OnJump();
 
             if (!_placed) return;
             Glide();
@@ -896,7 +746,6 @@ namespace StageSettAR
             Transform ts = cameraSource ? cameraSource.TrackingSpace : null;
             Matrix4x4 m = (ts ? ts.localToWorldMatrix : Matrix4x4.identity) * s.MapToTracking;
             Root.SetPositionAndRotation(m.GetPosition(), m.rotation);
-            if (debug.fusion == Fusion.Joint) Root.localScale = Vector3.one * s.scale;
         }
 
         /// <summary>Moves the shown placement towards the target for this frame; a large move is applied at once.</summary>
@@ -912,10 +761,10 @@ namespace StageSettAR
             _shown = AlignmentGlide.Step(_shown, _target, pivot, Time.unscaledDeltaTime, settings);
         }
 
-        // True while the run loop is going and has something to lose (OneShot stops looking once it has localized).
+        // True while the run loop is going.
         bool Localizing =>
             _solver != null && _cts != null && !_cts.IsCancellationRequested
-            && (State == LocalizerState.Initializing || State == LocalizerState.Lost || (State == LocalizerState.Localized && mode != Mode.OneShot));
+            && (State == LocalizerState.Initializing || State == LocalizerState.Lost || State == LocalizerState.Localized);
 
         // The localizer may live on the map root itself, so "hide" means deactivating the root's children.
         void HideChildren()

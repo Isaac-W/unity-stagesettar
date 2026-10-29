@@ -24,7 +24,7 @@ namespace StageSettAR
     /// <summary>
     /// Map-to-tracking transform p_trk = scale · Ry(yaw) · p_map + translation. Only yaw is free
     /// because the tracking space and the map both have gravity along -y. The scale is not fitted
-    /// per alignment: <see cref="SessionScaleEstimator"/> owns it.
+    /// per alignment: the localizer places the map at scale 1.
     /// </summary>
     public struct Alignment
     {
@@ -49,7 +49,7 @@ namespace StageSettAR
     /// </summary>
     /// <remarks>
     /// The headset's own tracking is smooth but drifts; a STAR fix is absolute but noisy. Fitting
-    /// one (yaw, translation) at a given scale (<see cref="SetScale"/>) to the reprojection error of
+    /// one (yaw, translation) at a given scale (<see cref="SetScale"/>, 1 by default) to the reprojection error of
     /// all recent frames, each seen from where tracking says the camera was, averages the noise down
     /// without trusting tracking over long times. Working in image space weights each landmark by what
     /// the network actually measured. Not thread-safe.

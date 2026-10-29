@@ -4,9 +4,9 @@ using UnityEngine;
 namespace StageSettAR
 {
     /// <summary>
-    /// How much of the room the accepted fixes of an Adaptive start-up have covered: how many, how far the head turned
+    /// How much of the room the accepted fixes of the Early phase have covered: how many, how far the head turned
     /// across them and how far the camera travelled. Enough of either turn or travel (with enough fixes) means the
-    /// placement can be trusted and refinement can slow down.
+    /// placement can be trusted and the Late phase can begin.
     /// </summary>
     internal sealed class CoverageTracker
     {
@@ -45,13 +45,5 @@ namespace StageSettAR
 
         public bool IsComplete(int minFixes, float minTurnDeg, float minMoveMeters) =>
             Count >= Math.Max(1, minFixes) && (TurnDegrees >= minTurnDeg || MoveMeters >= minMoveMeters);
-
-        public float FixesProgress(int minFixes) => Ratio(Count, Math.Max(1, minFixes));
-
-        /// <summary>The better of turn and travel compared with what each needs, 0 to 1.</summary>
-        public float SpreadProgress(float minTurnDeg, float minMoveMeters) =>
-            Mathf.Max(Ratio(TurnDegrees, minTurnDeg), Ratio(MoveMeters, minMoveMeters));
-
-        static float Ratio(float value, float needed) => needed <= 0f ? 1f : Mathf.Clamp01(value / needed);
     }
 }

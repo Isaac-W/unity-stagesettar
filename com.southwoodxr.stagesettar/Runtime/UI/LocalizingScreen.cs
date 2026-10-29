@@ -6,16 +6,16 @@ using static StageSettAR.StarLocalizer;
 namespace StageSettAR
 {
     /// <summary>
-    /// A small panel that tells the user what the STAR Localizer is doing: looking for the room, found it,
-    /// lost it, or gave up. With the Adaptive mode the panel goes away as soon as the map is first placed, since the
-    /// later refinement needs no message; until then the bar shows the agreeing fixes.
+    /// A small panel that tells the user what the STAR Localizer is doing: looking for the room (the Startup phase
+    /// before the first placement), lost tracking, or gave up. It goes away as soon as the map is shown, since the
+    /// later refinement needs no message.
     /// </summary>
     /// <remarks>
     /// The panel floats a little below eye level and follows the user's view softly (it uses
     /// <see cref="TagAlong"/>), so the real room stays visible. It finds the STAR Localizer in the scene
     /// by itself, also when one is loaded or created later. With no localizer it stays hidden, so a scene
     /// without a map is not affected. The StageSettAR Rig has one ready-made under its root; the
-    /// parts (canvas group, text, bar) are filled in by the menu builder, or by hand.
+    /// parts (canvas group, text) are filled in by the menu builder, or by hand.
     /// </remarks>
     [AddComponentMenu("StageSettAR/Localizing Screen")]
     [RequireComponent(typeof(TagAlong))]
@@ -23,13 +23,10 @@ namespace StageSettAR
     {
         [Header("Words")]
         public string searchingText = "Finding the room… look around slowly";
-        public string foundText = "Room found";
-        public string lostText = "Lost the room, look around";
+        public string lostText = "Lost tracking, look around";
         public string failedText = "Couldn't find this room. Are you in the right place?";
 
         [Header("Timing")]
-        [Tooltip("How long 'Room found' stays before the panel fades away.")]
-        public float foundSeconds = 1.5f;
         [Tooltip("Seconds the panel takes to fade in or out.")]
         public float fadeSeconds = 0.4f;
         [Tooltip("After the localizer gives up, search again by itself after this many seconds. 0 means never.")]
@@ -42,17 +39,13 @@ namespace StageSettAR
         public CanvasGroup group;
         [Tooltip("The message. Needed.")]
         public TMP_Text label;
-        [Tooltip("The whole progress bar (background and fill). Hidden when no search is running.")]
-        public GameObject bar;
-        [Tooltip("The part of the bar that fills; its width follows the search progress.")]
-        public RectTransform barFill;
 
         const float FindEverySeconds = 1f;
 
         Canvas _canvas;
         LocalizerState _shown = LocalizerState.Idle;
         bool _hadLocalizer;
-        float _nextFind, _holdUntil, _retryAt, _fill;
+        float _nextFind, _retryAt;
 
         void Reset() => ApplyDefaultPlacement();
 
@@ -91,9 +84,7 @@ namespace StageSettAR
             if (localizer != null)
             {
                 var state = localizer.State;
-                // The first time a localizer is seen, only an ongoing search or a failure is worth showing;
-                // a room that was found before this screen existed needs no message.
-                if (state != _shown || !_hadLocalizer) Enter(state, firstSight: !_hadLocalizer);
+                if (state != _shown || !_hadLocalizer) Enter(state);
                 _hadLocalizer = true;
                 target = TargetAlpha(state);
                 if (state == LocalizerState.Failed && retryAfterSeconds > 0f && Time.unscaledTime >= _retryAt)
@@ -101,7 +92,6 @@ namespace StageSettAR
                     _retryAt = Time.unscaledTime + retryAfterSeconds; // in case Relocalize cannot start
                     localizer.Relocalize();
                 }
-                UpdateBar(state);
             }
             else _hadLocalizer = false;
 
@@ -109,7 +99,7 @@ namespace StageSettAR
             SetAlpha(Mathf.MoveTowards(group.alpha, target, step));
         }
 
-        void Enter(LocalizerState state, bool firstSight)
+        void Enter(LocalizerState state)
         {
             _shown = state;
             switch (state)
@@ -120,36 +110,19 @@ namespace StageSettAR
                     label.text = failedText;
                     _retryAt = Time.unscaledTime + retryAfterSeconds;
                     break;
-                case LocalizerState.Localized:
-                    label.text = foundText;
-                    _holdUntil = firstSight || localizer.IsAdaptive ? 0f : Time.unscaledTime + foundSeconds;
-                    break;
             }
-            if (state != LocalizerState.Initializing && state != LocalizerState.Lost) _fill = 0f;
         }
 
         float TargetAlpha(LocalizerState state)
         {
             switch (state)
             {
-                case LocalizerState.Initializing:
+                // A map that is already shown (after Relocalize) needs no message while it is looked for again.
+                case LocalizerState.Initializing: return localizer.CurrentAlignment.valid ? 0f : 1f;
                 case LocalizerState.Lost:
                 case LocalizerState.Failed: return 1f;
-                case LocalizerState.Localized: return Time.unscaledTime < _holdUntil ? 1f : 0f;
                 default: return 0f;
             }
-        }
-
-        void UpdateBar(LocalizerState state)
-        {
-            bool searching = state == LocalizerState.Initializing || state == LocalizerState.Lost;
-            // Adaptive: only before the first placement; after a timeout the map is still shown and the next fix corrects it.
-            bool showBar = searching && (!localizer.IsAdaptive || !localizer.CurrentAlignment.valid);
-            if (bar != null && bar.activeSelf != showBar) bar.SetActive(showBar);
-            if (!showBar || barFill == null) return;
-            // Eased, because the real progress moves in steps as each fix arrives.
-            _fill = Mathf.MoveTowards(_fill, localizer.SearchProgress, Time.unscaledDeltaTime * 1.5f);
-            barFill.anchorMax = new Vector2(_fill, 1f);
         }
 
         void SetAlpha(float alpha)

@@ -41,15 +41,15 @@ The dialog also configures the URP renderers (also available as the Setup step "
 
 When the scene has a map, the user sees a small panel float a little below eye level, about a metre ahead. It follows their view softly and never covers the room, which stays visible all the time.
 
-- **Finding the room... look around slowly**. In the default `Adaptive` mode this lasts only until a few confident fixes agree (`fixesToShow`), with a bar that fills as they do, and the panel fades away as soon as the map is placed. The other modes show a progress bar that fills while you turn your head, then **Room found**.
-- **Lost the room, look around**, if the headset was localized and then loses the room.
+- **Finding the room... look around slowly**, while the Startup phase waits for a few confident fixes to agree (`startup.fixesToShow`). There is no progress bar: the panel fades away as soon as the map is placed and shown.
+- **Lost tracking, look around**, if the device lost its tracking (or the headset was taken off). The panel stays until tracking is back.
 - **Couldn't find this room. Are you in the right place?**, if it gives up. It tries again by itself after a few seconds.
 
 The panel is the `Localizing Screen` object under the StageSettAR Rig (or add the component **StageSettAR ▸ Localizing Screen** to your own world-space canvas). It finds the `STAR Localizer` by itself and stays hidden in scenes without a map. The words, the **Retry After Seconds** and the timings are plain fields on it.
 
-**Hooking up an intro.** The map stays hidden until the room is found (in `Adaptive` mode, until `fixesToShow` fixes agree, so it appears within a second or two; it may move a little while it is refined). Select the object with the `STAR Localizer` and, under **On First Localized**, press `+`, drag in what should happen, and pick its method. For example drag in a `Camera Fade` and pick `Clear`, an `Object Fade` and pick `FadeIn`, or a `Splat Reveal` and pick `Play`. **On First Localized** runs only once, the first time the room is found. **On Converged** runs when enough of the room has been seen for the placement to be trusted, and again after the room was lost and found again or, in `Adaptive` mode, after a re-seed restarted the confirmation. For a map that appears at once, do nothing.
+**Hooking up an intro.** The map stays hidden until the room is found (until `startup.fixesToShow` fixes agree, so it appears within a second or two; it may move a little while it is refined). Select the object with the `STAR Localizer` and, under **On First Localized**, press `+`, drag in what should happen, and pick its method. For example drag in a `Camera Fade` and pick `Clear`, an `Object Fade` and pick `FadeIn`, or a `Splat Reveal` and pick `Play`. **On First Localized** runs only once, the first time the room is found. **On Settled** runs when enough of the room has been seen for the placement to be trusted and the Late phase begins. For a map that appears at once, do nothing.
 
-For more advanced use the same component has **On Localizing**, **On Localized** (every time, including after a loss), **On Converged**, **On Lost**, **On Failed** (with a reason) and **On State Changed**.
+For more advanced use the same component has **On Localizing**, **On Localized** (every time, including after tracking came back and the placement was kept), **On Settled**, **On Lost**, **On Failed** (with a reason) and **On State Changed**.
 
 ## Scene setup (Quest 3)
 
@@ -95,53 +95,65 @@ The Inspector shows only the basics at first. Everything else sits in collapsed 
 | `mapRoot` | The object that gets moved into place. Defaults to the localizer's own object. |
 | `autoStart` | Start looking when the scene starts. Off: call `StartLocalization()` yourself. |
 | `hideUntilLocalized` | Children of the map root stay inactive until the first localization. |
-| `mode` | `Adaptive` (default) place the map once `fixesToShow` confident fixes agree, refine at full rate until enough of the room has been seen, then refine only in short bursts; `OneShot` localize once then stop; `Periodic` refine in short bursts on a timer; `Continuous` keep going at full rate. Components made before `Adaptive` existed keep the mode they had. |
-| events | `onLocalizing`, `onFirstLocalized`, `onLocalized`, `onConverged`, `onLost`, `onFailed`, `onStateChanged`. |
+| events | `onLocalizing`, `onFirstLocalized`, `onLocalized`, `onSettled`, `onLost`, `onFailed`, `onStateChanged`. |
+
+**Phases.** Timing is three phases, each with an `enabled` toggle and its own settings. The localizer starts in Startup, moves to Early once the map is placed, and to Late once Early has seen enough of the room. The current one is `CurrentPhase` (`Startup`, `Early`, `Late`).
+
+**Startup** (`startup`): finding the room.
+
+| Setting | Meaning |
+|---|---|
+| `enabled` | On (default). Off: the first confident fix places the map, with no agreement needed. |
+| `hz` | Frames analysed per second (4). |
+| `fixesToShow` | How many confident fixes (`gating.minConfidence`) must agree within `gating.agreementMeters` / `gating.agreementDegrees` before the map is placed and shown (3, minimum 1). They are fitted together; there is no turn or coverage requirement. The same wait applies after a tracking reset. Fixes that do not agree keep waiting. |
+| `failAfterSeconds` | If Startup does not finish within this time (25 s) the state becomes `Failed` and `onFailed("Not in this room…")` fires. |
+
+**Early** (`early`): refining right after the placement.
+
+| Setting | Meaning |
+|---|---|
+| `enabled` | On (default). Off: go straight to Late after Startup. |
+| `intervalSeconds` | Seconds between analysed frames (0.5). |
+| `minFixes`, `minTurnDeg`, `minMoveMeters` | Early ends once at least `minFixes` (4) accepted fixes are spread over a head turn of `minTurnDeg` (30°) or camera travel of `minMoveMeters` (0.5 m), whichever comes first. Travel is the extent of the camera positions on the floor (x and z); height is ignored. Then `onSettled` fires and Late begins. |
+| `gateMeters` / `gateDegrees` | Every accepted fix refines the joint fit. A fix that would move the map more than this (0.9 m / 18°, plus 3 sigma of the two fixes) is rejected; 3 rejects in a row that agree with each other re-seed the alignment from them, which also restarts Early's confirmation. |
+
+**Late** (`late`): checking now and then.
+
+| Setting | Meaning |
+|---|---|
+| `enabled` | On (default). Off: nothing is inferred once Early ends, and the map keeps its placement. |
+| `useInterval`, `intervalSeconds` | A check every 30 s. |
+| `useMove`, `moveMeters` | A check once the camera moved more than 2 m since the last check. |
+| `useTurn`, `turnDegrees` | A check once the head turned more than 60° since the last check. Each trigger can be switched off on its own. |
+| `hz`, `burstSeconds` | A check analyses frames at `hz` (4) for at most `burstSeconds` (3 s), and ends sooner once 3 fixes in a row agree with the placement. Nothing is inferred between checks. |
+| `refitMeters`, `refitDegrees` | The placement is only refitted when fixes that agree with each other put the map farther than this (0.05 m / 2°, plus 3 sigma of the two fixes) from it. 3 such fixes are fitted together and the map glides there; otherwise the placement is left alone. |
 
 **Timing** (`timing`)
 
 | Setting | Meaning |
 |---|---|
-| `periodSeconds`, `burstSeconds` | Periodic and Adaptive modes: rest between bursts (30 s) and burst length (3 s). Nothing is inferred and no camera frames are requested while resting. |
-| `refineDistanceMeters`, `refineTurnDegrees` | Adaptive mode: a burst starts early once the camera has moved this far (2 m) or the head turned this far (60°) since the last refinement. 0 turns a trigger off. |
-| `maxInferenceHz` | Most frames analysed per second (4). |
-| `failAfterSeconds` | Without agreement for this long (25 s) the state becomes `Failed` and `onFailed("Not in this room…")` fires. |
-| `lostAfterSeconds` | `Lost` if no fix for this long (15 s) while inferring. Resting does not count. |
 | `glideSeconds` | A changed alignment is eased in over this long (0.5 s, about 95 % of the way). The easing is exponential, so it does not depend on the frame rate and a new target mid-glide just changes the direction. The root is recomputed every `LateUpdate` as `TrackingSpace.localToWorld * MapToTracking`, so it follows locomotion. |
 | `smoothMoves` | On (default): every map move glides. Off: every move is applied at once. The first placement and a move after tracking was reset always snap. |
 | `snapAboveMeters`, `snapAboveDegrees` | A map move longer than this (1 m) or a turn larger than this (20°), compared with what is shown now, is applied at once instead of gliding, since a slide that large would look like the room drifting. 0 turns a limit off. The move is measured where the user is (the map content at the head position; the landmark centroid if the head position is unknown), so a small turn seen from far from the map origin is not mistaken for a large move. |
 
-**Consensus & gating** (`gating`)
+**Gating** (`gating`)
 
 | Setting | Meaning |
 |---|---|
-| `requireLookAround` | OneShot, Periodic and Continuous modes: needs `minFixes` (4) fixes agreeing within `agreementMeters` (0.1) / `agreementDegrees` (3), inside `lookAroundSeconds` (10), with a head turn of `minTurnDeg` (30). Off: the first accepted fix is used. |
 | `minConfidence` | Minimum PnP confidence (0..1) for a fix to count (0.5). |
-| `fixesToShow` | Adaptive mode: how many confident fixes (`minConfidence`) must agree within `agreementMeters` / `agreementDegrees`, inside `lookAroundSeconds`, before the map is first shown, and again after a tracking jump (default 3, minimum 1). No head turn is needed; that comes later with convergence. Fixes that do not agree keep waiting, and `failAfterSeconds` still applies. |
-| `minFixes`, `minTurnDeg`, `minMoveMeters` | Adaptive convergence: at least `minFixes` (4) accepted fixes, spread over a head turn of `minTurnDeg` (30°) or camera travel of `minMoveMeters` (0.5 m), whichever comes first. Travel is the extent of the camera positions on the floor (x and z); height is ignored. |
-| `gateMeters` / `gateDegrees` | A new fix farther from the current alignment than this (0.3 m / 6°, plus 3 sigma) is rejected; 3 consistent rejects in a row re-seed the alignment. Adaptive mode allows three times as much until converged. Comparisons are made at the scale in use. |
-| `trackingJumpMeters` | If the tracked camera (`CameraSource.TryGetCurrentPose`) jumps farther than this (1.5 m) from one rendered frame to the next, tracking was reset: `Lost`, and the alignment is re-initialized. A frame that was being analysed is dropped only if it was captured before the reset (`CameraFrame.timestamp` is on `Time.realtimeSinceStartupAsDouble`). A source whose `TryGetCurrentPose` returns false is checked on the poses of the frames it delivers instead. Walking never triggers it, in any mode, and a reset while the component was disabled is caught when it is enabled again. |
+| `agreementMeters` / `agreementDegrees` | Two fixes agree if the map lands within this of each other (0.1 m / 3°). |
+| `trackingJumpMeters` | If the tracked camera (`CameraSource.TryGetCurrentPose`) jumps farther than this (1.5 m) from one rendered frame to the next, tracking was reset (see Lost below). A frame that was being analysed is dropped only if it was captured before the reset (`CameraFrame.timestamp` is on `Time.realtimeSinceStartupAsDouble`). A source whose `TryGetCurrentPose` returns false is checked on the poses of the frames it delivers instead. Walking never triggers it. |
 
-**Session scale** (`sessionScale`, on by default)
+**Advanced** (`advanced`): `backend` (`GPUCompute`), `layersPerFrame` (10: network layers run per rendered frame, so no frame pays for the whole network; 0 runs it all at once), `inputScale` (1: 1 feeds the network the map's trained focal length; lower values, down to 0.25, shrink the whole image for speed but find fewer landmarks), `pnp` (pose solver) and `alignment` (`maxFrames` 30, `maxFrameAgeSeconds` 60, `huberPx`, `inlierPx`: the window and robust loss of the fit). **Debug** (`debug`): `fusion`: `Joint` (default) combines recent fixes with headset tracking, rejects outliers and glides the map into place; `Per Frame` places the map exactly where each single frame says, with no agreement check, gate, refit or glide, and Early never ends. It jitters and can jump to a wrong fix; use it to compare against `Joint`.
 
-| Setting | Meaning |
-|---|---|
-| `enabled` | Learn and apply the map's scale error. Off: the map stays at exactly 1 unit per metre. |
-| `minSpreadMeters`, `minFixes` | The scale is only learned after the headset has moved this far (0.5 m RMS spread of positions) over this many fixes (10). Standing still or turning on the spot never gets there. |
-| `outlierSigmas` | A fix this many sigma (3) from the current scale fit is left out of the scale. |
-| `maxRatePerSecond` | Fastest the scale may change (0.003 = 0.3 % per second). |
-| `minScale`, `maxScale` | The applied scale is clamped to this range (0.9 to 1.1). An estimate stuck at a limit logs a one-time warning: that suggests a badly scaled map. |
-| `priorScale` | The scale used until it can be learned (1). |
+States: `Idle`, `Initializing` (the Startup phase before the first placement), `Localized`, `Lost`, `Failed`. Other API: `CurrentPhase`, `SecondsUntilGiveUp`, `CurrentAlignment`, `LastConfidence`; control with `StartLocalization()`, `Relocalize()`, `StopLocalization()`. The map is always placed at scale 1; the localizer does not estimate a scale.
 
-**Advanced** (`advanced`): `backend` (`GPUCompute`), `layersPerFrame` (10: network layers run per rendered frame, so no frame pays for the whole network; 0 runs it all at once), `inputScale` (1: 1 feeds the network the map's trained focal length; lower values, down to 0.25, shrink the whole image for speed but find fewer landmarks), `pnp` (pose solver) and `alignment` (`maxFrames` 30, `maxFrameAgeSeconds` 60, `huberPx`, `inlierPx`: the window and robust loss of the fit). **Debug** (`debug`): `fusion`: `Joint` (default) combines recent fixes with headset tracking, rejects outliers and glides the map into place; `Per Frame` places the map exactly where each single frame says, with no agreement check, look-around, gate, refit, scale or glide. It jitters and can jump to a wrong fix; use it to compare against `Joint`.
-
-States: `Idle`, `Initializing`, `Localized`, `Lost`, `Failed`. `IsAdaptive` (whether the Adaptive behaviour is in effect: false with `Per Frame` fusion), `IsConverged` and `CoverageProgress` (0..1, how much of the room the placement has been confirmed by). Progress for your own UI: `SearchProgress` (0..1; in `Adaptive` mode the agreeing fixes towards `fixesToShow` until placed, then 1), `AgreeingFixes` / `FixesNeeded`, `TurnDegrees`, `SecondsUntilGiveUp`. Scale: read-only `ScaleEstimate`, `AppliedScale`, `ScaleSigma`, `ScaleObservable`; `ResetScale()`. Control: `StartLocalization()`, `Relocalize()`, `StopLocalization()`, `CurrentAlignment`.
-
-How `Adaptive` works: once `fixesToShow` fixes with confidence of at least `minConfidence` agree with each other, they are fitted together, the map is placed and the state becomes `Localized` (`onFirstLocalized`). The same wait applies after a tracking jump. Every further fix goes through the joint fit at full rate, with a wider outlier gate, so the map may visibly move for a moment. Once the accepted fixes cover enough (see `minFixes`, `minTurnDeg`, `minMoveMeters`) `onConverged` fires and the localizer rests, with bursts as described above. A tracking jump or a re-seed starts the confirmation over; a `Lost` by timeout does too, but leaves the map where it is until the next fix.
+**Lost.** The localizer never gives up on the room because of time or missing fixes: failing to get fixes in Early or Late only means nothing is refined, and the headset's own tracking carries the map. It goes `Lost` (`onLost`) only when the device has no tracking, `CameraSource.IsTracking` is false, or when the tracked camera jumps (tracking was reset). While `Lost` nothing is inferred.
+- When tracking comes back after it was lost with the headset on, or after a jump, the old placement cannot be trusted: the map is hidden (`hideUntilLocalized`) and the localizer goes back to Startup (state `Initializing`).
+- If tracking was lost only because the headset was taken off (`CameraSource.IsWorn` false) and no jump was seen when it came back, the placement is kept and the localizer carries on in the phase it was in (Early if Early had not finished, else Late) with state `Localized` and `onLocalized`.
+- `ArFoundationCameraSource` reports tracking from `ARSession.state` (an initializing session has no tracking) and the head-mounted device's `CommonUsages.userPresence` from Unity XR. A platform without a signal, such as a phone's `userPresence`, counts as tracking. Other sources keep the default `true`; a custom `CameraSource` can override `IsTracking` and `IsWorn`.
 
 How fixes are used: each frame gives a camera pose in the map; combined with where the headset says the camera was, that implies a map-to-tracking alignment (yaw + translation; gravity is shared). The current alignment is also passed to PnP as a prior, and an `AlignmentSolver` refits a window of recent frames, which averages noise down without trusting drifting tracking over long times.
-
-**Scale.** Maps and splats are exported at 1 unit = 1 m, so the leftover scale error is small (a few per cent). It is not fitted per window, where it would wobble as frames come and go. Instead `SessionScaleEstimator` estimates one scale for the whole session from the history of fixes, taking the headset's tracking distances as the true metres: it regresses the PnP camera positions in the map onto the tracked positions (tracking is nearly noise-free, so this avoids dilution bias), `s = Σ w|t̃|² / Σ w (R·c̃)·t̃` over positions centred per segment, with `R` each segment's yaw. A segment is one alignment: it ends on a tracking jump, `Lost` or a re-seed, and yaw and translation are per segment while the scale is shared. The scale is only observable once the headset has really moved; standing or turning on the spot leaves the prior untouched. The applied scale follows the estimate slowly (rate-limited, clamped), the solver refits yaw and translation at that scale, and the glide hides the change. The scale survives `Lost` and `Relocalize()`; it is reset when the map changes or by `ResetScale()`.
 
 ## Editor testing
 

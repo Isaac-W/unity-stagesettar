@@ -145,6 +145,20 @@ namespace StageSettAR
 
         public override Transform TrackingSpace => xrOrigin != null ? xrOrigin.transform : null;
 
+        // AR Foundation reports tracking that is missing (lost, or not found yet) as an initializing session. In any
+        // other state, such as before the session starts, there is no signal, which counts as tracking.
+        public override bool IsTracking => IsWorn && ARSession.state != ARSessionState.SessionInitializing;
+
+        // Quest reports whether the headset is on a head; phones have no such device, so they count as worn.
+        public override bool IsWorn
+        {
+            get
+            {
+                InputDevice head = InputDevices.GetDeviceAtXRNode(XRNode.Head);
+                return !head.isValid || !head.TryGetFeatureValue(CommonUsages.userPresence, out bool present) || present;
+            }
+        }
+
         public override bool TryGetCurrentPose(out Pose pose)
         {
             pose = Pose.identity;

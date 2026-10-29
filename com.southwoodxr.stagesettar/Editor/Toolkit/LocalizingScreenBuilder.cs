@@ -5,8 +5,7 @@ using UnityEngine.UI;
 namespace StageSettAR.Editor
 {
     /// <summary>
-    /// Builds the "Localizing Screen": a world-space canvas with a background, a message and a progress
-    /// bar, wired to a <see cref="LocalizingScreen"/>.
+    /// Builds the "Localizing Screen": a world-space canvas with a background and a message, wired to a <see cref="LocalizingScreen"/>.
     /// </summary>
     /// <remarks>
     /// Lives here because this assembly only exists when UGUI and TextMeshPro do. The rig builder calls
@@ -40,7 +39,7 @@ namespace StageSettAR.Editor
 
             var textObject = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
             textObject.transform.SetParent(go.transform, false);
-            Anchor(textObject.GetComponent<RectTransform>(), new Vector2(0f, 0.3f), Vector2.one, new Vector2(30f, 0f), new Vector2(-30f, -15f));
+            Anchor(textObject.GetComponent<RectTransform>(), Vector2.zero, Vector2.one, new Vector2(30f, 15f), new Vector2(-30f, -15f));
             var text = textObject.GetComponent<TextMeshProUGUI>();
             text.fontSize = 32f;
             text.enableAutoSizing = true;
@@ -50,17 +49,10 @@ namespace StageSettAR.Editor
             text.color = Color.white;
             text.raycastTarget = false;
 
-            var bar = Panel("Bar", go.transform, new Color(1f, 1f, 1f, 0.2f));
-            Anchor(bar, new Vector2(0.1f, 0.12f), new Vector2(0.9f, 0.24f), Vector2.zero, Vector2.zero);
-            var fill = Panel("Fill", bar.transform, new Color(0.35f, 0.75f, 1f, 1f));
-            Anchor(fill, Vector2.zero, new Vector2(0f, 1f), Vector2.zero, Vector2.zero); // anchor max x is the progress
-
             var screen = go.AddComponent<LocalizingScreen>();
             screen.ApplyDefaultPlacement();
             screen.group = go.GetComponent<CanvasGroup>();
             screen.label = text;
-            screen.bar = bar.gameObject;
-            screen.barFill = fill;
             return go;
         }
 

@@ -6,50 +6,118 @@ namespace StageSettAR
     /// <summary>The numbers <see cref="LocalizerSchedule"/> works from. The localizer reads them from its settings every frame.</summary>
     internal struct ScheduleSettings
     {
-        public StarLocalizer.Mode mode;
-        public float maxInferenceHz, periodSeconds, burstSeconds;
-        public float refineDistanceMeters, refineTurnDegrees;
-        public float lostAfterSeconds, trackingJumpMeters;
+        public float startupHz;
+        public bool earlyEnabled;
+        public float earlyIntervalSeconds;
+        public bool lateEnabled, lateByTime, lateByMove, lateByTurn;
+        public float lateIntervalSeconds, lateMoveMeters, lateTurnDegrees, lateBurstSeconds, lateHz;
     }
 
     /// <summary>
-    /// Decides when <see cref="StarLocalizer"/> looks at the camera: how fast, when to rest, when a rest ends in a
-    /// refinement burst, and how long it has gone without a good fix. It knows nothing about Unity objects, so it can be
-    /// tested with plain numbers.
+    /// Decides when <see cref="StarLocalizer"/> looks at the camera, in which phase it is, and whether the device has
+    /// tracking. It knows nothing about Unity objects, so it can be tested with plain numbers.
     /// </summary>
     /// <remarks>
-    /// Only Periodic and Adaptive ever rest, and only once <c>steady</c> (Periodic: localized; Adaptive: converged).
-    /// A steady schedule rests, starts a burst when the period is up (or, in Adaptive, the camera moved or turned far),
-    /// and goes back to resting when the burst ends; losing steadiness ends either at once and returns to full rate.
-    /// Time spent resting does not count towards <see cref="TimedOut"/>.
+    /// Startup and Early infer all the time, at their own rate. Late rests, and a short check starts when the
+    /// interval is up or the camera moved or turned far (each trigger can be off); a check ends when it times out or the
+    /// localizer calls <see cref="EndCheck"/>. The localizer moves between phases with <see cref="Enter"/>;
+    /// <see cref="AfterPlacement"/> says where to go when Early is switched off. Missing fixes never end a phase: only
+    /// the device losing tracking does (see <see cref="UpdateTracking"/>).
     /// </remarks>
     internal sealed class LocalizerSchedule
     {
-        double _nextInfer, _nextBurst, _burstEnd, _lastTick, _sinceFix;
+        /// <summary>What <see cref="LocalizerSchedule.UpdateTracking"/> found.</summary>
+        public enum TrackingChange
+        {
+            None,
+            /// <summary>Tracking just went away.</summary>
+            Lost,
+            /// <summary>Tracking is back and the placement can be kept: the headset was only taken off.</summary>
+            Resumed,
+            /// <summary>Tracking is back after it was lost for real: the old placement cannot be trusted.</summary>
+            RestartNeeded,
+        }
+
+        double _nextInfer, _nextCheck, _checkEnd;
         double _lastPosTime, _jumpTime = double.NegativeInfinity;
-        bool _burst, _wasSteady, _wasActive, _hasTick, _hasPos;
+        bool _checking, _needsReference, _hasPos, _trackingLost, _resetNeeded;
         Vector3 _lastPos, _refPos;
         float _refHeading;
+        int _confirms;
 
-        /// <summary>Seconds spent inferring since the last accepted fix.</summary>
-        public double SecondsWithoutFix => _sinceFix;
+        public StarLocalizer.Phase Phase { get; private set; }
 
-        /// <summary>True while a refinement burst is running.</summary>
-        public bool Bursting => _burst;
+        /// <summary>True while the device has no tracking. No frames are wanted then.</summary>
+        public bool TrackingLost => _trackingLost;
+
+        /// <summary>True while a Late check is running.</summary>
+        public bool Checking => _checking;
+
+        /// <summary>The phase after the map was placed: Early, or Late when Early is off.</summary>
+        public static StarLocalizer.Phase AfterPlacement(in ScheduleSettings s) =>
+            s.earlyEnabled ? StarLocalizer.Phase.Early : StarLocalizer.Phase.Late;
 
         /// <summary>
-        /// Forgets the timing, for a fresh start or after the loop was paused. The tracking-jump baseline is kept, so a
+        /// Forgets the timing and starts in Startup, for a fresh start. The tracking-jump baseline is kept, so a
         /// tracking reset that happened while the loop was paused is still noticed at the next sample.
         /// </summary>
         public void Reset()
         {
-            _nextInfer = _nextBurst = _burstEnd = _lastTick = _sinceFix = 0.0;
-            _burst = _wasSteady = _wasActive = _hasTick = false;
+            _nextInfer = 0.0;
+            _trackingLost = _resetNeeded = false;
+            Enter(StarLocalizer.Phase.Startup);
         }
 
-        public void FixAccepted() => _sinceFix = 0.0;
+        /// <summary>Carries on in the same phase after a pause, with the Late triggers counted from now.</summary>
+        public void Resume() => Enter(Phase);
 
-        public bool TimedOut(in ScheduleSettings s) => _sinceFix > s.lostAfterSeconds;
+        public void Enter(StarLocalizer.Phase phase)
+        {
+            Phase = phase;
+            _checking = false;
+            _needsReference = true;
+        }
+
+        /// <summary>
+        /// Call every frame with what the camera source says. Tracking going away is reported once. When it comes back,
+        /// the placement is only kept if the headset was simply taken off: tracking that went away while the headset was
+        /// on may have been reset, and then the map would be in the wrong place. A reset that goes unnoticed here is
+        /// still caught by <see cref="TrackJump"/>.
+        /// </summary>
+        public TrackingChange UpdateTracking(bool tracking, bool worn)
+        {
+            if (!tracking && !_trackingLost)
+            {
+                _trackingLost = true;
+                _resetNeeded = worn;
+                return TrackingChange.Lost;
+            }
+            if (tracking && _trackingLost)
+            {
+                _trackingLost = false;
+                if (_resetNeeded) { _resetNeeded = false; return TrackingChange.RestartNeeded; }
+                Resume();
+                return TrackingChange.Resumed;
+            }
+            return TrackingChange.None;
+        }
+
+        /// <summary>Ends the running Late check, and the next one is counted from now.</summary>
+        public void EndCheck()
+        {
+            _checking = false;
+            _needsReference = true;
+        }
+
+        /// <summary>
+        /// Late: a confident fix was compared with the placement. The check ends once <paramref name="needed"/> fixes in a
+        /// row agreed with it, because there is nothing left to find out.
+        /// </summary>
+        public void CheckedFix(bool agrees, int needed)
+        {
+            _confirms = agrees ? _confirms + 1 : 0;
+            if (_confirms >= needed) EndCheck();
+        }
 
         /// <summary>
         /// Call with every sample of the tracked camera position. True when the camera moved farther than the limit since the
@@ -72,60 +140,91 @@ namespace StageSettAR
         public bool PredatesJump(double captureTime) => captureTime < _jumpTime;
 
         /// <summary>
-        /// Call every frame. Returns whether frames are wanted at all right now; <see cref="ShouldInfer"/> then applies the rate limit.
-        /// <paramref name="pos"/> and <paramref name="heading"/> (degrees) are the tracked camera's, for the distance and turn triggers.
+        /// Call every frame. Returns whether frames are wanted at all right now; <see cref="ShouldInfer"/> then applies the rate.
+        /// <paramref name="pos"/> and <paramref name="heading"/> (degrees) are the tracked camera's, for the Late triggers.
         /// </summary>
-        public bool Tick(double now, bool steady, Vector3 pos, float heading, in ScheduleSettings s)
+        public bool WantsFrames(double now, Vector3 pos, float heading, in ScheduleSettings s)
         {
-            // The time since the last call counts only if it was spent inferring, so resting never leads to Lost.
-            if (_hasTick && _wasActive) _sinceFix += now - _lastTick;
-            _lastTick = now;
-            _hasTick = true;
-
-            bool rests = s.mode == StarLocalizer.Mode.Periodic || s.mode == StarLocalizer.Mode.Adaptive;
-            if (!steady || !rests)
-            {
-                _wasSteady = steady;
-                _burst = false;
-            }
-            else
-            {
-                if (!_wasSteady) { _wasSteady = true; _burst = false; StartRest(now, pos, heading, s); }
-                if (_burst)
-                {
-                    if (now > _burstEnd) { _burst = false; StartRest(now, pos, heading, s); }
-                }
-                else if (BurstDue(now, pos, heading, s))
-                {
-                    _burst = true;
-                    _burstEnd = now + s.burstSeconds;
-                }
-            }
-
-            _wasActive = !steady || !rests || _burst;
-            return _wasActive;
+            if (_trackingLost) return false;
+            return Phase != StarLocalizer.Phase.Late || LateWantsFrames(now, pos, heading, s);
         }
 
         /// <summary>True when enough time has passed since the last <see cref="OnInferred"/> for another frame.</summary>
         public bool ShouldInfer(double now) => now >= _nextInfer;
 
         /// <summary>Call when a frame was taken for analysis, to start the wait for the next one.</summary>
-        public void OnInferred(double now, in ScheduleSettings s) => _nextInfer = now + 1.0 / Math.Max(0.1f, s.maxInferenceHz);
+        public void OnInferred(double now, in ScheduleSettings s) => _nextInfer = now + Interval(s);
 
-        void StartRest(double now, Vector3 pos, float heading, in ScheduleSettings s)
+        double Interval(in ScheduleSettings s)
         {
-            _nextBurst = now + s.periodSeconds;
-            _refPos = pos;
-            _refHeading = heading;
+            switch (Phase)
+            {
+                case StarLocalizer.Phase.Startup: return 1.0 / Math.Max(0.1f, s.startupHz);
+                case StarLocalizer.Phase.Early: return s.earlyIntervalSeconds;
+                default: return 1.0 / Math.Max(0.1f, s.lateHz);
+            }
         }
 
-        // Adaptive also refines early when the user has gone somewhere new, because that is where drift shows.
-        bool BurstDue(double now, Vector3 pos, float heading, in ScheduleSettings s)
+        bool LateWantsFrames(double now, Vector3 pos, float heading, in ScheduleSettings s)
         {
-            if (now >= _nextBurst) return true;
-            if (s.mode != StarLocalizer.Mode.Adaptive) return false;
-            if (s.refineDistanceMeters > 0f && (pos - _refPos).magnitude > s.refineDistanceMeters) return true;
-            return s.refineTurnDegrees > 0f && Mathf.Abs(Mathf.DeltaAngle(_refHeading, heading)) > s.refineTurnDegrees;
+            if (!s.lateEnabled) return false;
+            if (_checking && now > _checkEnd) EndCheck();
+            if (_needsReference)
+            {
+                _needsReference = false;
+                _nextCheck = now + s.lateIntervalSeconds;
+                _refPos = pos;
+                _refHeading = heading;
+            }
+            if (!_checking && CheckDue(now, pos, heading, s))
+            {
+                _checking = true;
+                _checkEnd = now + s.lateBurstSeconds;
+                _confirms = 0;
+            }
+            return _checking;
         }
+
+        // Drift shows when the user has gone somewhere new, so moving or turning far starts a check as well as the clock.
+        bool CheckDue(double now, Vector3 pos, float heading, in ScheduleSettings s) =>
+            (s.lateByTime && now >= _nextCheck)
+            || (s.lateByMove && (pos - _refPos).magnitude > s.lateMoveMeters)
+            || (s.lateByTurn && Mathf.Abs(Mathf.DeltaAngle(_refHeading, heading)) > s.lateTurnDegrees);
+    }
+
+    /// <summary>
+    /// Compares two alignments by what they do to the map: how far the landmark centroid shifts and how far the yaw differs.
+    /// Pure, so it can be tested with plain numbers.
+    /// </summary>
+    internal static class PlacementCheck
+    {
+        public static void Difference(in Alignment a, in Alignment b, Vector3 centroid, out float meters, out float degrees)
+        {
+            meters = (a.MapToTracking.MultiplyPoint3x4(centroid) - b.MapToTracking.MultiplyPoint3x4(centroid)).magnitude;
+            degrees = Mathf.Abs(Mathf.DeltaAngle(a.yawDeg, b.yawDeg));
+        }
+
+        /// <summary>Two fixes agree if they put the map within both limits of each other.</summary>
+        public static bool Agree(in Alignment a, in Alignment b, Vector3 centroid, float meters, float degrees)
+        {
+            Difference(a, b, centroid, out float m, out float deg);
+            return m <= meters && deg <= degrees;
+        }
+
+        /// <summary>
+        /// True when <paramref name="fix"/> puts the map farther from <paramref name="current"/> than the limits plus a margin
+        /// for the uncertainty of both. This is the Early gate (a fix beyond it is rejected) and the Late deviation test
+        /// (a fix beyond it is evidence that the map has moved). Nothing is refitted for a fix inside the limits.
+        /// </summary>
+        public static bool Beyond(in Alignment current, in Alignment fix, Vector3 centroid, float meters, float degrees)
+        {
+            Difference(current, fix, centroid, out float m, out float deg);
+            return m > meters + 3f * (Known(current.positionSigma) + Known(fix.positionSigma))
+                || deg > degrees + 3f * (Known(current.yawSigmaDeg) + Known(fix.yawSigmaDeg));
+        }
+
+        // A solve whose covariance could not be inverted reports an infinite sigma. Unknown must not widen the limits
+        // to accept anything, so it falls back to the fixed part.
+        static float Known(float sigma) => float.IsFinite(sigma) ? sigma : 0f;
     }
 }

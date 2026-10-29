@@ -159,6 +159,18 @@ namespace StageSettAR
         public virtual Transform TrackingSpace => null;
 
         /// <summary>
+        /// False while the device has no tracking (its own tracking is lost, or the headset is taken off). The localizer
+        /// does not look at the camera then, and the map is not trusted afterwards. A source that cannot tell says true.
+        /// </summary>
+        public virtual bool IsTracking => true;
+
+        /// <summary>
+        /// False while the headset is known to be taken off. Part of <see cref="IsTracking"/>, but told apart because tracking
+        /// that only paused for that reason usually carries on where it was. A source that cannot tell says true.
+        /// </summary>
+        public virtual bool IsWorn => true;
+
+        /// <summary>
         /// The focal length (in pixels) the landmark network was trained at, set by <see cref="StarLocalizer"/>.
         /// A source may use it to deliver no more pixels than the network needs. Zero means unknown.
         /// </summary>
