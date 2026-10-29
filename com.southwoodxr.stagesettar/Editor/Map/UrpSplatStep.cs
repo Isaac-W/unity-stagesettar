@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEngine;
@@ -10,12 +11,27 @@ using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 namespace StageSettAR.Editor
 {
     /// <summary>
-    /// Makes every editable URP renderer sort splats with <see cref="StageSettARSplatURPFeature"/>
-    /// and deactivates UnitySplats' own feature, so splats are sorted once.
+    /// Makes every URP renderer that the project can actually use (Graphics settings and every quality
+    /// level) sort splats with <see cref="StageSettARSplatURPFeature"/>, and deactivates UnitySplats' own
+    /// feature, so splats are sorted once.
     /// </summary>
+    /// <remarks>
+    /// Lives in the gated Map assembly, so it only exists once UnitySplats is installed; the Setup window
+    /// finds it through TypeCache like every other step. A renderer whose StageSettAR feature was switched
+    /// off on purpose is reported but left alone.
+    /// </remarks>
     public sealed class UrpSplatStep : ISetupStep
     {
         const string k_gsplatFeature = "Gsplat.GsplatURPFeature";
+
+        enum State
+        {
+            Ready,
+            /// <summary>Our feature is present but switched off by the user.</summary>
+            Disabled,
+            /// <summary>Our feature is absent, or the stock one is also active.</summary>
+            NeedsWork,
+        }
 
         static SetupStatus s_status;
         static string s_detail = "";
@@ -31,54 +47,86 @@ namespace StageSettAR.Editor
             if (EditorApplication.timeSinceStartup - s_checked > 2)
             {
                 s_checked = EditorApplication.timeSinceStartup;
-                var renderers = FindRenderers();
-                var pending = 0;
-                foreach (var r in renderers) if (NeedsWork(r)) pending++;
-                if (renderers.Count == 0) { s_status = SetupStatus.Blocked; s_detail = "No URP renderer asset found in Assets/."; }
-                else if (pending > 0) { s_status = SetupStatus.Needed; s_detail = $"{pending} of {renderers.Count} URP renderer(s) still need the StageSettAR splat feature."; }
-                else { s_status = SetupStatus.Done; s_detail = $"{renderers.Count} URP renderer(s) are set up."; }
+                s_status = Evaluate(out s_detail);
             }
             detail = s_detail;
             return s_status;
         }
 
-        public void Run() => Configure();
-
-        /// <summary>Used by the setup window, the import dialog and the menu.</summary>
-        public static void Configure()
+        static SetupStatus Evaluate(out string detail)
         {
-            var renderers = FindRenderers();
+            var renderers = UsedRenderers();
             if (renderers.Count == 0)
-                Debug.LogWarning("[StageSettAR] No editable URP renderer data found; nothing to configure.");
-
-            foreach (var data in renderers)
             {
-                var changed = false;
-                var has = false;
+                detail = "No URP renderer is assigned in Project Settings > Graphics or Quality.";
+                return SetupStatus.Blocked;
+            }
+
+            var fixable = 0;
+            var locked = new List<string>();
+            var disabled = new List<string>();
+            foreach (var r in renderers)
+            {
+                var state = Inspect(r);
+                if (state == State.Disabled) disabled.Add(r.name);
+                else if (state == State.NeedsWork)
+                {
+                    if (IsEditable(r)) fixable++;
+                    else locked.Add(r.name);
+                }
+            }
+
+            var note = "";
+            if (disabled.Count > 0) note += $" Switched off on purpose, left as is: {string.Join(", ", disabled)}.";
+            if (locked.Count > 0) note += $" Cannot be edited (read-only or in a package): {string.Join(", ", locked)}. Assign a renderer from Assets/ in Quality settings.";
+
+            if (fixable > 0)
+            {
+                detail = $"{fixable} of {renderers.Count} URP renderer(s) still need the StageSettAR splat feature.{note}";
+                return SetupStatus.Needed;
+            }
+            if (locked.Count > 0)
+            {
+                detail = $"{locked.Count} of {renderers.Count} URP renderer(s) need the StageSettAR splat feature.{note}";
+                return SetupStatus.Blocked;
+            }
+            detail = $"{renderers.Count} URP renderer(s) are set up.{note}";
+            return SetupStatus.Done;
+        }
+
+        public void Run()
+        {
+            var changed = false;
+            foreach (var data in UsedRenderers())
+            {
+                if (Inspect(data) != State.NeedsWork) continue;
+                if (!IsEditable(data))
+                {
+                    Debug.LogWarning($"[StageSettAR] {data.name} is read-only or in a package; add the StageSettAR Splat Sort feature to it by hand, or use a renderer from Assets/.", data);
+                    continue;
+                }
+
+                var hasOurs = false;
                 foreach (var f in data.rendererFeatures)
                 {
                     if (!f) continue;
-                    if (f is StageSettARSplatURPFeature)
-                    {
-                        has = true;
-                        if (!f.isActive) { f.SetActive(true); EditorUtility.SetDirty(f); changed = true; }
-                    }
-                    else if (f.GetType().FullName == k_gsplatFeature && f.isActive)
+                    if (f is StageSettARSplatURPFeature) hasOurs = true;
+                    else if (IsStock(f) && f.isActive)
                     {
                         f.SetActive(false);
                         EditorUtility.SetDirty(f);
-                        changed = true;
                         Debug.Log($"[StageSettAR] Deactivated Gsplat URP Feature in {data.name}", data);
                     }
                 }
-                if (!has)
+                if (!hasOurs)
                 {
                     AddFeature(data);
-                    changed = true;
                     Debug.Log($"[StageSettAR] Added StageSettAR Splat Sort feature to {data.name}", data);
                 }
-                if (changed) { EditorUtility.SetDirty(data); AssetDatabase.SaveAssets(); }
+                EditorUtility.SetDirty(data);
+                changed = true;
             }
+            if (changed) AssetDatabase.SaveAssets();
             s_checked = double.NegativeInfinity;
 
             var settings = GsplatSettings.Instance;
@@ -86,40 +134,46 @@ namespace StageSettAR.Editor
                 Debug.LogWarning("[StageSettAR] GsplatSettings is missing or invalid; splats will not render. Check Project Settings > Gsplat.");
         }
 
-        static bool NeedsWork(ScriptableRendererData data)
+        static bool IsStock(ScriptableRendererFeature f) => f.GetType().FullName == k_gsplatFeature;
+
+        static State Inspect(ScriptableRendererData data)
         {
-            var has = false;
+            bool ours = false, oursActive = false, stockActive = false;
             foreach (var f in data.rendererFeatures)
             {
                 if (!f) continue;
-                if (f is StageSettARSplatURPFeature) has |= f.isActive;
-                else if (f.GetType().FullName == k_gsplatFeature && f.isActive) return true;
+                if (f is StageSettARSplatURPFeature) { ours = true; oursActive |= f.isActive; }
+                else if (IsStock(f) && f.isActive) stockActive = true;
             }
-            return !has;
+            if (ours && !oursActive) return State.Disabled;
+            return oursActive && !stockActive ? State.Ready : State.NeedsWork;
         }
 
-        // Renderers of the project's pipeline assets plus every UniversalRendererData asset, minus read-only package ones.
-        static List<ScriptableRendererData> FindRenderers()
+        // Every renderer of the default pipeline asset and of each quality level's asset. A quality level
+        // without its own asset uses the default one, which is already included.
+        static List<ScriptableRendererData> UsedRenderers()
         {
-            var set = new HashSet<ScriptableRendererData>();
-            void Add(ScriptableRendererData r)
-            {
-                if (r && EditorUtility.IsPersistent(r) && IsEditable(AssetDatabase.GetAssetPath(r))) set.Add(r);
-            }
+            var list = new List<ScriptableRendererData>();
+            var seen = new HashSet<RenderPipelineAsset>();
             void AddPipeline(RenderPipelineAsset a)
             {
-                if (a is UniversalRenderPipelineAsset u) foreach (var r in u.rendererDataList) Add(r);
+                if (a is not UniversalRenderPipelineAsset || !seen.Add(a)) return;
+                // Read through the serialized list: it holds every slot, not only the ones the pipeline has built.
+                var slots = new SerializedObject(a).FindProperty("m_RendererDataList");
+                for (var i = 0; slots != null && i < slots.arraySize; i++)
+                    if (slots.GetArrayElementAtIndex(i).objectReferenceValue is ScriptableRendererData r && !list.Contains(r))
+                        list.Add(r);
             }
             AddPipeline(GraphicsSettings.defaultRenderPipeline);
             for (var i = 0; i < QualitySettings.names.Length; i++) AddPipeline(QualitySettings.GetRenderPipelineAssetAt(i));
-            foreach (var guid in AssetDatabase.FindAssets("t:UniversalRendererData"))
-                Add(AssetDatabase.LoadAssetAtPath<ScriptableRendererData>(AssetDatabase.GUIDToAssetPath(guid)));
-            return new List<ScriptableRendererData>(set);
+            return list;
         }
 
-        static bool IsEditable(string path)
+        static bool IsEditable(ScriptableRendererData data)
         {
-            if (path.StartsWith("Assets/", System.StringComparison.Ordinal)) return true;
+            if (!EditorUtility.IsPersistent(data)) return false;
+            var path = AssetDatabase.GetAssetPath(data);
+            if (path.StartsWith("Assets/", System.StringComparison.Ordinal)) return !new FileInfo(path).IsReadOnly;
             var pkg = PackageInfo.FindForAssetPath(path);
             return pkg != null && pkg.source is PackageSource.Embedded or PackageSource.Local;
         }

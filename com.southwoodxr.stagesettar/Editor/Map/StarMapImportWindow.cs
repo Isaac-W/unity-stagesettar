@@ -17,8 +17,8 @@ namespace StageSettAR.Editor
 {
     /// <summary>
     /// Imports a star-mobile map zip into the project (model, splat, floor image, a <see cref="StarMap"/>
-    /// asset and a ready-to-use prefab), optionally drops it into the open scene, and makes sure the URP
-    /// renderers sort splats with <see cref="StageSettARSplatURPFeature"/>.
+    /// asset and a ready-to-use prefab), and optionally drops it into the open scene. The splat is
+    /// only imported once the Setup steps it depends on are done (see <see cref="SplatSetupReady"/>).
     /// </summary>
     public sealed class StarMapImportWindow : EditorWindow
     {
@@ -43,18 +43,36 @@ namespace StageSettAR.Editor
 
         string m_zip, m_mapText, m_dest;
         MapDto m_map;
-        bool m_hasSplat, m_hasHoldout, m_importSplat = true, m_addToScene = true, m_configureUrp = true, m_bakeShells;
+        bool m_hasSplat, m_hasHoldout, m_importSplat = true, m_addToScene = true, m_bakeShells;
         Gsplat.CompressionMode m_compression = Gsplat.CompressionMode.Spark;
         string m_error;
 
         [MenuItem("Tools/StageSettAR/Import STAR Map…")]
         static void Open() => GetWindow<StarMapImportWindow>("Import STAR Map");
 
-        [MenuItem("Tools/StageSettAR/Configure URP For Splats")]
-        static void ConfigureUrpMenu() => UrpSplatStep.Configure();
+        // The Setup steps a splat import depends on. Fixing them is the Setup window's job, not the importer's.
+        static readonly ISetupStep[] k_splatSteps = { new SplatDependencyStep(), new UrpSplatStep() };
+
+        static bool SplatSetupReady(out string message)
+        {
+            var lines = new List<string>();
+            foreach (var step in k_splatSteps)
+                if (step.GetStatus(out var detail) != SetupStatus.Done) lines.Add(step.Title + ": " + detail);
+            message = string.Join("\n", lines);
+            return lines.Count == 0;
+        }
+
+        void OnFocus() => Repaint();
 
         void OnGUI()
         {
+            var setupReady = SplatSetupReady(out var setupMessage);
+            if (!setupReady)
+            {
+                EditorGUILayout.HelpBox("Splats will not be imported or rendered until project setup is finished.\n" + setupMessage, MessageType.Warning);
+                if (GUILayout.Button("Open Setup", GUILayout.Height(24))) SetupWindow.Open();
+            }
+
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.SelectableLabel(m_zip ?? "No file selected", GUILayout.Height(18));
             if (GUILayout.Button("Choose .zip…", GUILayout.Width(100)))
@@ -76,20 +94,21 @@ namespace StageSettAR.Editor
                 m_hasSplat ? "present" : "absent"), MessageType.Info);
 
             m_dest = EditorGUILayout.TextField("Destination folder", m_dest);
-            using (new EditorGUI.DisabledScope(!m_hasSplat))
+            var splatOk = m_hasSplat && setupReady;
+            using (new EditorGUI.DisabledScope(!splatOk))
             {
-                m_importSplat = EditorGUILayout.Toggle("Import splat", m_importSplat && m_hasSplat);
+                var importSplat = EditorGUILayout.Toggle("Import splat", m_importSplat && splatOk);
+                if (splatOk) m_importSplat = importSplat;
                 m_compression = (Gsplat.CompressionMode)EditorGUILayout.EnumPopup("Splat compression", m_compression);
             }
             m_addToScene = EditorGUILayout.Toggle("Add to open scene", m_addToScene);
-            m_configureUrp = EditorGUILayout.Toggle("Configure URP renderer for splats", m_configureUrp);
-            using (new EditorGUI.DisabledScope(!m_hasSplat || !m_importSplat || !m_addToScene))
+            using (new EditorGUI.DisabledScope(!splatOk || !m_importSplat || !m_addToScene))
             {
                 m_bakeShells = EditorGUILayout.Toggle(new GUIContent("Bake panoramic shells",
                     "Bakes the far-away part of the splat into a few cheap shells once the map is in the scene. Takes a while; it is the same as Tools > StageSettAR > Bake Panoramic Shells."),
-                    m_bakeShells && m_hasSplat && m_importSplat && m_addToScene);
+                    m_bakeShells && splatOk && m_importSplat && m_addToScene);
             }
-            if (m_hasSplat && m_importSplat && !m_addToScene)
+            if (splatOk && m_importSplat && !m_addToScene)
                 EditorGUILayout.HelpBox("To bake shells, add the map to the open scene, select the splat and use Tools > StageSettAR > Bake Panoramic Shells.", MessageType.None);
 
             if (GUILayout.Button("Import", GUILayout.Height(28)))
@@ -179,7 +198,13 @@ namespace StageSettAR.Editor
             if (!model) throw new InvalidDataException("Unity.InferenceEngine did not import model.onnx as a ModelAsset");
 
             GsplatAsset splat = null;
-            if (m_importSplat && files.TryGetValue("splat.spz", out var spz))
+            var importSplat = m_importSplat;
+            if (importSplat && !SplatSetupReady(out _))
+            {
+                importSplat = false;
+                Debug.LogWarning("[StageSettAR] Splat not imported: finish the steps in Tools > StageSettAR > Setup first, then import again.");
+            }
+            if (importSplat && files.TryGetValue("splat.spz", out var spz))
             {
                 EditorUtility.DisplayProgressBar("Importing STAR map", "Importing splat", 0.4f);
                 var spzPath = Write(dest + "/splat.spz", spz);
@@ -220,13 +245,12 @@ namespace StageSettAR.Editor
             var starMap = CreateOrUpdateMap(dest + "/" + name + ".asset", map, landmarks, model, topdown, td);
             var prefab = BuildPrefab(dest + "/" + name + ".prefab", name, starMap, splat, topdown, td);
 
-            if (m_configureUrp) UrpSplatStep.Configure();
             Debug.Log($"[StageSettAR] Imported '{map.name}' ({landmarks.Length} landmarks{(splat ? ", splat" : "")}) to {dest}", starMap);
             if (m_addToScene)
             {
                 var instance = AddToScene(prefab);
                 var renderer = instance ? instance.GetComponentInChildren<GsplatRenderer>(true) : null;
-                if (m_bakeShells && renderer)
+                if (m_bakeShells && importSplat && renderer)
                     // After the import has finished, so the bake finds the splat fully loaded.
                     EditorApplication.delayCall += () => { if (renderer) SplatShellsEditor.BakeFor(renderer); };
             }
@@ -333,21 +357,25 @@ namespace StageSettAR.Editor
 
                 if (topdown)
                 {
+                    // Created (active) only with the prefab. On re-import a Floor the user deleted stays gone,
+                    // and one they deactivated stays off; an existing one only gets its placement refreshed.
                     var floor = root.transform.Find("Floor")?.gameObject;
-                    if (!floor)
+                    if (!floor && !exists)
                     {
                         floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
                         floor.name = "Floor";
                         UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
                         floor.transform.SetParent(root.transform, false);
-                        floor.SetActive(false);
                     }
-                    var b = map.topdownBounds;
-                    // Quad lying flat: local y -> +z, so uv v follows Unity z, matching the PNG orientation.
-                    floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
-                    floor.transform.localPosition = new Vector3(b.center.x, map.topdownY + 0.005f, b.center.y);
-                    floor.transform.localScale = new Vector3(b.width, b.height, 1);
-                    floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), topdown);
+                    if (floor)
+                    {
+                        var b = map.topdownBounds;
+                        // Quad lying flat: local y -> +z, so uv v follows Unity z, matching the PNG orientation.
+                        floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
+                        floor.transform.localPosition = new Vector3(b.center.x, map.topdownY + 0.005f, b.center.y);
+                        floor.transform.localScale = new Vector3(b.width, b.height, 1);
+                        floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), topdown);
+                    }
                 }
                 return PrefabUtility.SaveAsPrefabAsset(root, path);
             }

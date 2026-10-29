@@ -20,7 +20,7 @@ namespace StageSettAR.Editor
         Vector2 m_scroll;
 
         [MenuItem("Tools/StageSettAR/Setup…")]
-        static void Open() => GetWindow<SetupWindow>("StageSettAR Setup");
+        public static void Open() => GetWindow<SetupWindow>("StageSettAR Setup");
 
         [InitializeOnLoadMethod]
         static void AutoOpen()
