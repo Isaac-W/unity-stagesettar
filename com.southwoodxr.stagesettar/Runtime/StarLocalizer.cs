@@ -22,9 +22,10 @@ namespace StageSettAR
     /// slowly, and is not touched while the user stands still.
     /// <see cref="Fusion.PerFrame"/> skips the gate and the refit and places the map straight from
     /// each fix, for comparing against the joint fit.
-    /// In <see cref="Mode.Adaptive"/> (the default) the first confident fix places the map and every further fix refines it at full
-    /// rate until enough coverage has been seen (head turn or travel, over enough agreeing fixes); after that the localizer only
-    /// refines in short bursts, when time has passed or the user has moved or turned a lot (see <see cref="LocalizerSchedule"/>).
+    /// In <see cref="Mode.Adaptive"/> (the default) the first confident fix places the map, and every further fix refines it
+    /// at full rate until enough coverage has been seen (head turn or travel, over enough agreeing fixes).
+    /// After that the localizer only refines in short bursts, when time has passed or the user has moved or turned a lot
+    /// (see <see cref="LocalizerSchedule"/>).
     /// </remarks>
     [AddComponentMenu("StageSettAR/STAR Localizer")]
     public sealed class StarLocalizer : MonoBehaviour
@@ -56,6 +57,10 @@ namespace StageSettAR
             public float glideSeconds = 0.5f;
             [Tooltip("Slide every map move into place over Glide Seconds. Default on: refinements are not seen as jumps. Off: every move is applied at once. A move after tracking was reset always snaps.")]
             public bool smoothMoves = true;
+            [Tooltip("A map move longer than this many metres is applied at once instead of gliding. Default 1: a slide that long would look like the room drifting. 0 turns it off.")]
+            public float snapAboveMeters = 1f;
+            [Tooltip("A map turn larger than this many degrees is applied at once instead of gliding. Default 20. 0 turns it off.")]
+            public float snapAboveDegrees = 20f;
         }
 
         [Serializable]
@@ -147,7 +152,7 @@ namespace StageSettAR
         [Tooltip("Starts every time the room is found, including after it was lost.")]
         public UnityEvent onLocalized = new UnityEvent();
         [Tooltip("Starts when enough of the room has been seen for the placement to be trusted (Adaptive mode), or together with On Localized in the other modes. " +
-                 "Starts again after the room was lost and found again.")]
+                 "Starts again after the room was lost and found again, and in Adaptive mode after a re-seed, which restarts the confirmation (with a small Min Fixes that can be at once).")]
         public UnityEvent onConverged = new UnityEvent();
         [Tooltip("Starts when the headset was localized and then lost the room.")]
         public UnityEvent onLost = new UnityEvent();
@@ -174,30 +179,94 @@ namespace StageSettAR
 
         // ---- search progress, for a UI that shows how close the room is to being found ----
 
+        /// <summary>True when the Adaptive behaviour is in effect. Adaptive needs the joint fit, and Per Frame has no fit to
+        /// converge, so with Per Frame fusion the Adaptive mode behaves like Continuous and this is false.</summary>
+        public bool IsAdaptive => mode == Mode.Adaptive && debug.fusion == Fusion.Joint;
+
         /// <summary>True once enough of the room has been seen for the placement to be trusted. In Adaptive mode that is
         /// coverage (see <see cref="CoverageProgress"/>); in the other modes it is true as soon as the room is found.
         /// False again after the room is lost.</summary>
         public bool IsConverged => _converged;
 
         /// <summary>How many recent fixes agree with each other so far (Adaptive: accepted fixes since the first placement).</summary>
-        public int AgreeingFixes { get { if (Adaptive) return _coverage.Count; RefreshProgress(); return _agreeing; } }
+        public int AgreeingFixes
+        {
+            get
+            {
+                if (IsAdaptive) return _coverage.Count;
+                RefreshProgress();
+                return _agreeing;
+            }
+        }
+
         /// <summary>How many agreeing fixes are needed before the room counts as found (Adaptive: as converged).</summary>
-        public int FixesNeeded => Adaptive || (debug.fusion == Fusion.Joint && gating.requireLookAround) ? Math.Max(1, gating.minFixes) : 1;
+        public int FixesNeeded
+        {
+            get
+            {
+                bool lookAround = debug.fusion == Fusion.Joint && gating.requireLookAround;
+                return IsAdaptive || lookAround ? Math.Max(1, gating.minFixes) : 1;
+            }
+        }
+
         /// <summary>How far the head has turned across the agreeing fixes, in degrees.</summary>
-        public float TurnDegrees { get { if (Adaptive) return _coverage.TurnDegrees; RefreshProgress(); return _turnDeg; } }
+        public float TurnDegrees
+        {
+            get
+            {
+                if (IsAdaptive) return _coverage.TurnDegrees;
+                RefreshProgress();
+                return _turnDeg;
+            }
+        }
+
         /// <summary>Agreeing fixes so far compared with what is needed, 0 to 1.</summary>
-        public float FixesProgress => Done ? 1f : Adaptive ? _coverage.FixesProgress(gating.minFixes) : Mathf.Clamp01(AgreeingFixes / (float)FixesNeeded);
+        public float FixesProgress
+        {
+            get
+            {
+                if (Done) return 1f;
+                if (IsAdaptive) return _coverage.FixesProgress(gating.minFixes);
+                return Mathf.Clamp01(AgreeingFixes / (float)FixesNeeded);
+            }
+        }
+
         /// <summary>Head turn so far compared with what is needed, 0 to 1. Always 1 when the look-around is not required.
         /// In Adaptive mode the camera travelling far enough counts as well.</summary>
-        public float TurnProgress =>
-            Done || debug.fusion == Fusion.PerFrame ? 1f
-            : Adaptive ? _coverage.SpreadProgress(gating.minTurnDeg, gating.minMoveMeters)
-            : !gating.requireLookAround || gating.minTurnDeg <= 0f ? 1f : Mathf.Clamp01(TurnDegrees / gating.minTurnDeg);
+        public float TurnProgress
+        {
+            get
+            {
+                if (Done || debug.fusion == Fusion.PerFrame) return 1f;
+                if (IsAdaptive) return _coverage.SpreadProgress(gating.minTurnDeg, gating.minMoveMeters);
+                if (!gating.requireLookAround || gating.minTurnDeg <= 0f) return 1f;
+                return Mathf.Clamp01(TurnDegrees / gating.minTurnDeg);
+            }
+        }
+
         /// <summary>One number, 0 to 1, for a progress bar while the room is being found: the average of fix progress and turn progress.
         /// 1 once localized. In Adaptive mode the room is found at the first fix, so use <see cref="CoverageProgress"/> for the refinement after it.</summary>
-        public float SearchProgress => State == LocalizerState.Localized ? 1f : Adaptive ? 0f : 0.5f * (FixesProgress + TurnProgress);
+        public float SearchProgress
+        {
+            get
+            {
+                if (State == LocalizerState.Localized) return 1f;
+                if (IsAdaptive) return 0f;
+                return 0.5f * (FixesProgress + TurnProgress);
+            }
+        }
+
         /// <summary>One number, 0 to 1, for how much of the room has been covered since the map was placed. 1 once <see cref="IsConverged"/>, 0 before the first placement.</summary>
-        public float CoverageProgress => _converged ? 1f : State != LocalizerState.Localized ? 0f : 0.5f * (FixesProgress + TurnProgress);
+        public float CoverageProgress
+        {
+            get
+            {
+                if (_converged) return 1f;
+                if (State != LocalizerState.Localized) return 0f;
+                return 0.5f * (FixesProgress + TurnProgress);
+            }
+        }
+
         /// <summary>Seconds left before the localizer gives up and fails. 0 when it is not in the initial search.</summary>
         public float SecondsUntilGiveUp
         {
@@ -218,6 +287,7 @@ namespace StageSettAR
 
         const int MaxCandidates = 32, RejectsToReseed = 3;
         const float ConvergingGateFactor = 3f;   // Adaptive: how much wider the gate is until converged
+        const double FrameGapSeconds = 2.0;      // frames farther apart than this are not compared for a tracking jump
 
         StarDetector _detector;
         StarMap _detectorMap; // the map _detector was built for: its network and landmark count
@@ -238,6 +308,7 @@ namespace StageSettAR
         readonly CoverageTracker _coverage = new CoverageTracker();
         int _epoch;   // changes when the alignment is discarded, so a frame that was being analysed at the time is dropped
         Vector3 _headPos;   // the tracked camera in tracking space, sampled every frame
+        bool _hasHead;
         float _headHeading;
         int _rejects, _initFixes;
         Alignment _lastReject;
@@ -247,13 +318,11 @@ namespace StageSettAR
 
         Transform Root => mapRoot ? mapRoot : transform;
 
-        // Adaptive needs the joint fit; Per Frame has no fit to converge, so Adaptive then behaves like Continuous.
-        bool Adaptive => mode == Mode.Adaptive && debug.fusion == Fusion.Joint;
-        bool Done => Adaptive ? _converged : State == LocalizerState.Localized;
+        bool Done => IsAdaptive ? _converged : State == LocalizerState.Localized;
 
         ScheduleSettings ScheduleNow => new ScheduleSettings
         {
-            mode = mode == Mode.Adaptive && !Adaptive ? Mode.Continuous : mode,
+            mode = mode == Mode.Adaptive && !IsAdaptive ? Mode.Continuous : mode,
             maxInferenceHz = timing.maxInferenceHz, periodSeconds = timing.periodSeconds, burstSeconds = timing.burstSeconds,
             refineDistanceMeters = timing.refineDistanceMeters, refineTurnDegrees = timing.refineTurnDegrees,
             lostAfterSeconds = timing.lostAfterSeconds, trackingJumpMeters = gating.trackingJumpMeters,
@@ -315,7 +384,7 @@ namespace StageSettAR
             cameraSource.TargetFocal = map.focal * advanced.inputScale;
             _cts?.Cancel();
             _cts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
-            _solver =new AlignmentSolver(advanced.alignment, map);
+            _solver = new AlignmentSolver(advanced.alignment, map);
             if (_scale == null || _scaleMap != map) { _scale = new SessionScaleEstimator(sessionScale); _scaleMap = map; }
             else _scale.BeginSegment();
             _solver.SetScale(_scale.AppliedScale);
@@ -397,10 +466,10 @@ namespace StageSettAR
                     if (State == LocalizerState.Failed || State == LocalizerState.Idle) return;
                     if (State == LocalizerState.Localized && mode == Mode.OneShot) return;
                     ScheduleSettings sched = ScheduleNow;
-                    bool steady = State == LocalizerState.Localized && (!Adaptive || _converged);
-                    if (!_schedule.Update(now, steady, _headPos, _headHeading, sched)) continue;
+                    bool steady = State == LocalizerState.Localized && (!IsAdaptive || _converged);
+                    if (!_schedule.Tick(now, steady, _headPos, _headHeading, sched)) continue;
                     if (State == LocalizerState.Localized && _schedule.TimedOut(sched)) Lose(now, false);
-                    if (!_schedule.Due(now) || _detector.Busy || !cameraSource.IsReady) continue;
+                    if (!_schedule.ShouldInfer(now) || _detector.Busy || !cameraSource.IsReady) continue;
                     if (!cameraSource.TryGetFrame(_lastId, out CameraFrame frame)) continue;
                     _lastId = frame.id;
                     if (!frame.hasPose)
@@ -408,15 +477,17 @@ namespace StageSettAR
                         if (!_warnedNoPose) { _warnedNoPose = true; Debug.LogWarning("[StageSettAR] Camera source delivers frames without a pose; they are skipped."); }
                         continue;
                     }
-                    _schedule.Inferred(now, sched);
+                    _schedule.OnInferred(now, sched);
                     if (State == LocalizerState.Initializing && _initStart < 0) _initStart = now;
+                    // A source that cannot report its pose between frames is watched on the frames it delivers.
+                    if (!cameraSource.TryGetCurrentPose(out _)) SampleHeadFromFrame(frame, now);
 
                     int epoch = _epoch;
                     _detector.LayersPerFrame = advanced.layersPerFrame;
                     _detector.InputScale = advanced.inputScale;
                     Detections d = await _detector.DetectAsync(frame, ct);
                     ct.ThrowIfCancellationRequested();
-                    if (epoch != _epoch) continue;   // tracking was reset while the frame was being analysed
+                    if (IsStale(epoch, frame)) continue;
                     await ProcessFrame(work, frame, d, epoch, ct);
                     ct.ThrowIfCancellationRequested();
 
@@ -434,6 +505,10 @@ namespace StageSettAR
             }
         }
 
+        // A frame is dropped if the alignment was discarded while it was analysed, or if it was captured before tracking
+        // was reset (its pose is in the old tracking space). A frame captured after the reset is good for the new alignment.
+        bool IsStale(int epoch, in CameraFrame frame) => epoch != _epoch || _schedule.PredatesJump(frame.timestamp);
+
         async Awaitable ProcessFrame(PnpWork w, CameraFrame frame, Detections d, int epoch, CancellationToken ct)
         {
             // Prior: where the current alignment says the camera should be, in the network camera's axes.
@@ -450,7 +525,7 @@ namespace StageSettAR
 
             PnpResult r = await SolvePnp(w, d, hasPrior, priorR, priorT);
             ct.ThrowIfCancellationRequested();
-            if (epoch != _epoch) return;   // the alignment was discarded meanwhile; this frame belongs to the old one
+            if (IsStale(epoch, frame)) return;
             double now = Time.realtimeSinceStartupAsDouble;
             if (!r.success || r.confidence < gating.minConfidence) return;
 
@@ -473,7 +548,7 @@ namespace StageSettAR
             if (_current.valid)
             {
                 // Until converged (Adaptive) the placement may be off by more than drift, so the gate is wider; wild fixes still fail it.
-                if (WithinGate(_current, a, Adaptive && !_converged ? ConvergingGateFactor : 1f))
+                if (WithinGate(_current, a, IsAdaptive && !_converged ? ConvergingGateFactor : 1f))
                 {
                     _rejects = 0;
                     _solver.AddFrame(d, w.solver.InlierMask, frame.cameraPose, now);
@@ -483,7 +558,7 @@ namespace StageSettAR
                     Alignment fit = SolveWindow(_current);
                     if (fit.valid) { _current = fit; Place(fit, false); }
                     _schedule.FixAccepted();
-                    if (Adaptive) AddCoverage(frame.cameraPose);
+                    if (IsAdaptive) AddCoverage(frame.cameraPose);
                 }
                 else
                 {
@@ -497,7 +572,7 @@ namespace StageSettAR
 
             _schedule.FixAccepted();
             _initFixes++;
-            if (Adaptive)
+            if (IsAdaptive)
             {
                 // Initializing / Lost: the first confident fix places the map. The single fix is protected by the confidence
                 // threshold, the wide gate and the re-seed after three agreeing rejects, and waiting for a second one would
@@ -547,7 +622,7 @@ namespace StageSettAR
             SetState(LocalizerState.Localized);
             onLocalized.Invoke();
             if (!_everLocalized) { _everLocalized = true; onFirstLocalized.Invoke(); }
-            if (!Adaptive) SetConverged();   // the look-around consensus already is the convergence
+            if (!IsAdaptive) SetConverged();   // the look-around consensus already is the convergence
         }
 
         void AddCoverage(in Pose camera)
@@ -594,7 +669,7 @@ namespace StageSettAR
             Place(_current, false);
             _rejects = 0;
             _schedule.FixAccepted();
-            if (!Adaptive) return;
+            if (!IsAdaptive) return;
             // A restarted fit has to be confirmed again, at full rate.
             _converged = false;
             _coverage.Reset();
@@ -735,7 +810,8 @@ namespace StageSettAR
         void Lose(double now, bool discontinuity)
         {
             if (State == LocalizerState.Localized) { SetState(LocalizerState.Lost); onLost.Invoke(); }
-            _current = default; _cands.Clear(); _rejects = 0; _progressFrame = -1; _epoch++;
+            _current = default; _cands.Clear(); _rejects = 0; _progressFrame = -1;
+            if (!discontinuity) _epoch++;   // after a tracking reset, frames are told apart by their capture time instead
             _converged = false; _coverage.Reset();   // the next alignment is a new fit and has to be confirmed again
             _solver.Clear();
             _scale.BeginSegment();   // the next alignment is a new fit; the scale itself stays
@@ -779,32 +855,48 @@ namespace StageSettAR
             if (cameraSource == null || !cameraSource.TryGetCurrentPose(out Pose pose)) return false;
             _headPos = pose.position;
             _headHeading = Heading(pose);
+            _hasHead = true;
             return true;
+        }
+
+        // The fallback for sources without TryGetCurrentPose. A pose from before a rest is too old to compare with,
+        // because walking in between is not a tracking reset.
+        void SampleHeadFromFrame(in CameraFrame frame, double now)
+        {
+            _headPos = frame.cameraPose.position;
+            _headHeading = Heading(frame.cameraPose);
+            _hasHead = true;
+            if (_schedule.TrackJump(_headPos, gating.trackingJumpMeters, frame.timestamp, FrameGapSeconds)) Lose(now, true);
         }
 
         /// <summary>Every frame, so the map follows XR Origin locomotion (the alignment is in tracking space).</summary>
         void LateUpdate()
         {
+            double now = Time.realtimeSinceStartupAsDouble;
             // The jump test looks at every frame, not only the analysed ones, so a long walk never looks like a jump.
-            if (SampleHead() && _schedule.TrackJump(_headPos, gating.trackingJumpMeters) && Localizing)
-                Lose(Time.realtimeSinceStartupAsDouble, true);
+            if (SampleHead() && _schedule.TrackJump(_headPos, gating.trackingJumpMeters, now) && Localizing)
+                Lose(now, true);
 
             if (!_placed) return;
-            if (timing.smoothMoves && timing.glideSeconds > 0f)
-            {
-                // Exponential approach: independent of the frame rate, and a new target only changes where the map is heading,
-                // so a target that arrives mid-glide causes no restart. About 95 % of the way after glideSeconds.
-                float k = 1f - Mathf.Exp(-3f * Time.unscaledDeltaTime / timing.glideSeconds);
-                _shown.yawDeg += Mathf.DeltaAngle(_shown.yawDeg, _target.yawDeg) * k;
-                _shown.translation = Vector3.Lerp(_shown.translation, _target.translation, k);
-                _shown.scale = Mathf.Lerp(_shown.scale, _target.scale, k);
-            }
-            else _shown = _target;
+            Glide();
             Alignment s = _shown;
             Transform ts = cameraSource ? cameraSource.TrackingSpace : null;
             Matrix4x4 m = (ts ? ts.localToWorldMatrix : Matrix4x4.identity) * s.MapToTracking;
             Root.SetPositionAndRotation(m.GetPosition(), m.rotation);
             if (debug.fusion == Fusion.Joint) Root.localScale = Vector3.one * s.scale;
+        }
+
+        /// <summary>Moves the shown placement towards the target for this frame; a large move is applied at once.</summary>
+        void Glide()
+        {
+            var settings = new GlideSettings
+            {
+                smooth = timing.smoothMoves, seconds = timing.glideSeconds,
+                snapMeters = timing.snapAboveMeters, snapDegrees = timing.snapAboveDegrees,
+            };
+            // The size of a move is judged where the user is, or at the landmarks when the head position is unknown.
+            Vector3 pivot = _hasHead ? _headPos : _shown.MapToTracking.MultiplyPoint3x4(_centroid);
+            _shown = AlignmentGlide.Step(_shown, _target, pivot, Time.unscaledDeltaTime, settings);
         }
 
         // True while the run loop is going and has something to lose (OneShot stops looking once it has localized).

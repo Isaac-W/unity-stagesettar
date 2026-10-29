@@ -122,7 +122,7 @@ namespace StageSettAR
                     break;
                 case LocalizerState.Localized:
                     label.text = foundText;
-                    _holdUntil = firstSight || localizer.mode == Mode.Adaptive ? 0f : Time.unscaledTime + foundSeconds;
+                    _holdUntil = firstSight || localizer.IsAdaptive ? 0f : Time.unscaledTime + foundSeconds;
                     break;
             }
             if (state != LocalizerState.Initializing && state != LocalizerState.Lost) _fill = 0f;
@@ -144,7 +144,7 @@ namespace StageSettAR
         {
             bool searching = state == LocalizerState.Initializing || state == LocalizerState.Lost;
             // Adaptive finds the room at the first fix, so there is no progress to show.
-            bool showBar = searching && localizer.mode != Mode.Adaptive;
+            bool showBar = searching && !localizer.IsAdaptive;
             if (bar != null && bar.activeSelf != showBar) bar.SetActive(showBar);
             if (!showBar || barFill == null) return;
             // Eased, because the real progress moves in steps as each fix arrives.

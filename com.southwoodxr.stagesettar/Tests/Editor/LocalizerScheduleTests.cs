@@ -16,7 +16,7 @@ namespace StageSettAR.Tests
         static bool Run(LocalizerSchedule sch, double from, double to, bool steady, in ScheduleSettings s, Vector3 pos = default, float heading = 0f)
         {
             bool active = false;
-            for (double t = from; t <= to + 1e-9; t += 0.1) active = sch.Update(t, steady, pos, heading, s);
+            for (int i = 0; from + i * 0.1 <= to + 1e-9; i++) active = sch.Tick(from + i * 0.1, steady, pos, heading, s);
             return active;
         }
 
@@ -27,12 +27,12 @@ namespace StageSettAR.Tests
         {
             var s = Settings(StarLocalizer.Mode.Adaptive);
             var sch = new LocalizerSchedule();
-            Assert.IsTrue(sch.Update(0, false, Vector3.zero, 0f, s));
-            Assert.IsTrue(sch.Due(0));
-            sch.Inferred(0, s);
-            Assert.IsFalse(sch.Due(0.2));
-            Assert.IsTrue(sch.Due(0.25));
-            Assert.IsTrue(sch.Update(100, false, Vector3.zero, 0f, s), "never rests before it is steady");
+            Assert.IsTrue(sch.Tick(0, false, Vector3.zero, 0f, s));
+            Assert.IsTrue(sch.ShouldInfer(0));
+            sch.OnInferred(0, s);
+            Assert.IsFalse(sch.ShouldInfer(0.2));
+            Assert.IsTrue(sch.ShouldInfer(0.25));
+            Assert.IsTrue(sch.Tick(100, false, Vector3.zero, 0f, s), "never rests before it is steady");
         }
 
         [Test]
@@ -50,14 +50,14 @@ namespace StageSettAR.Tests
         {
             var s = Settings(StarLocalizer.Mode.Adaptive);
             var sch = new LocalizerSchedule();
-            Assert.IsFalse(sch.Update(10, true, Vector3.zero, 0f, s), "rest starts at once");
+            Assert.IsFalse(sch.Tick(10, true, Vector3.zero, 0f, s), "rest starts at once");
             Assert.IsFalse(Run(sch, 10.1, 39.9, true, s));
-            Assert.IsTrue(sch.Update(40, true, Vector3.zero, 0f, s), "30 s after the rest began");
+            Assert.IsTrue(sch.Tick(40, true, Vector3.zero, 0f, s), "30 s after the rest began");
             Assert.IsTrue(sch.Bursting);
             Assert.IsTrue(Run(sch, 40.1, 42.9, true, s));
-            Assert.IsFalse(sch.Update(43.1, true, Vector3.zero, 0f, s), "burst over after 3 s");
+            Assert.IsFalse(sch.Tick(43.1, true, Vector3.zero, 0f, s), "burst over after 3 s");
             Assert.IsFalse(Run(sch, 43.2, 72.9, true, s));
-            Assert.IsTrue(sch.Update(73.2, true, Vector3.zero, 0f, s), "next period counts from the end of the burst");
+            Assert.IsTrue(sch.Tick(73.2, true, Vector3.zero, 0f, s), "next period counts from the end of the burst");
         }
 
         [Test]
@@ -65,9 +65,9 @@ namespace StageSettAR.Tests
         {
             var s = Settings(StarLocalizer.Mode.Adaptive);
             var sch = new LocalizerSchedule();
-            sch.Update(0, true, Vector3.zero, 0f, s);
-            Assert.IsFalse(sch.Update(1, true, new Vector3(1.9f, 0f, 0f), 0f, s));
-            Assert.IsTrue(sch.Update(2, true, new Vector3(2.1f, 0f, 0f), 0f, s));
+            sch.Tick(0, true, Vector3.zero, 0f, s);
+            Assert.IsFalse(sch.Tick(1, true, new Vector3(1.9f, 0f, 0f), 0f, s));
+            Assert.IsTrue(sch.Tick(2, true, new Vector3(2.1f, 0f, 0f), 0f, s));
             Assert.IsTrue(sch.Bursting);
         }
 
@@ -76,9 +76,9 @@ namespace StageSettAR.Tests
         {
             var s = Settings(StarLocalizer.Mode.Adaptive);
             var sch = new LocalizerSchedule();
-            sch.Update(0, true, Vector3.zero, 170f, s);
-            Assert.IsFalse(sch.Update(1, true, Vector3.zero, -135f, s), "55 degrees across the wrap-around");
-            Assert.IsTrue(sch.Update(2, true, Vector3.zero, -125f, s), "65 degrees");
+            sch.Tick(0, true, Vector3.zero, 170f, s);
+            Assert.IsFalse(sch.Tick(1, true, Vector3.zero, -135f, s), "55 degrees across the wrap-around");
+            Assert.IsTrue(sch.Tick(2, true, Vector3.zero, -125f, s), "65 degrees");
         }
 
         [Test]
@@ -86,10 +86,10 @@ namespace StageSettAR.Tests
         {
             var s = Settings(StarLocalizer.Mode.Adaptive);
             var sch = new LocalizerSchedule();
-            sch.Update(0, true, Vector3.zero, 0f, s);
+            sch.Tick(0, true, Vector3.zero, 0f, s);
             var far = new Vector3(3f, 0f, 0f);
-            Assert.IsTrue(sch.Update(1, true, far, 0f, s));
-            Assert.IsFalse(sch.Update(4.5, true, far, 0f, s), "burst over; the new place is the reference");
+            Assert.IsTrue(sch.Tick(1, true, far, 0f, s));
+            Assert.IsFalse(sch.Tick(4.5, true, far, 0f, s), "burst over; the new place is the reference");
             Assert.IsFalse(Run(sch, 4.6, 20, true, s, far));
         }
 
@@ -98,9 +98,9 @@ namespace StageSettAR.Tests
         {
             var s = Settings(StarLocalizer.Mode.Periodic);
             var sch = new LocalizerSchedule();
-            sch.Update(0, true, Vector3.zero, 0f, s);
-            Assert.IsFalse(sch.Update(1, true, new Vector3(10f, 0f, 0f), 120f, s));
-            Assert.IsTrue(sch.Update(30, true, Vector3.zero, 0f, s));
+            sch.Tick(0, true, Vector3.zero, 0f, s);
+            Assert.IsFalse(sch.Tick(1, true, new Vector3(10f, 0f, 0f), 120f, s));
+            Assert.IsTrue(sch.Tick(30, true, Vector3.zero, 0f, s));
         }
 
         [Test]
@@ -148,8 +148,102 @@ namespace StageSettAR.Tests
             var sch = new LocalizerSchedule();
             Run(sch, 0, 10, true, s);
             sch.Reset();
-            sch.Update(500, true, Vector3.zero, 0f, s);
+            sch.Tick(500, true, Vector3.zero, 0f, s);
             Assert.AreEqual(0.0, sch.SecondsWithoutFix, 1e-6);
+        }
+
+        // ---- interrupted and repeated bursts ----
+
+        [Test]
+        public void ABurstEndsWhenTheFitIsNoLongerSteady()
+        {
+            var s = Settings(StarLocalizer.Mode.Adaptive);
+            var sch = new LocalizerSchedule();
+            sch.Tick(0, true, Vector3.zero, 0f, s);
+            Assert.IsTrue(sch.Tick(30, true, Vector3.zero, 0f, s));
+            Assert.IsTrue(sch.Bursting);
+            // A re-seed or Lose makes the localizer not steady in the middle of the burst: full rate, no burst.
+            Assert.IsTrue(sch.Tick(31, false, Vector3.zero, 0f, s));
+            Assert.IsFalse(sch.Bursting);
+            Assert.IsTrue(Run(sch, 31.1, 60, false, s), "stays at full rate while not steady");
+        }
+
+        [Test]
+        public void RestStartsOverOnceSteadyAgain()
+        {
+            var s = Settings(StarLocalizer.Mode.Adaptive);
+            var sch = new LocalizerSchedule();
+            sch.Tick(0, true, Vector3.zero, 0f, s);
+            sch.Tick(30, true, Vector3.zero, 0f, s);   // burst
+            sch.Tick(31, false, Vector3.zero, 0f, s);  // interrupted
+            Assert.IsFalse(sch.Tick(50, true, Vector3.zero, 0f, s), "steady again: rests at once");
+            Assert.IsFalse(Run(sch, 50.1, 79.9, true, s), "a whole new period, not the old one");
+            Assert.IsTrue(sch.Tick(80, true, Vector3.zero, 0f, s));
+        }
+
+        [Test]
+        public void BurstsWithoutAFixAddUpToLost()
+        {
+            var s = Settings(StarLocalizer.Mode.Adaptive);
+            var sch = new LocalizerSchedule();
+            sch.FixAccepted();
+            // Bursts of 3 s start about every 33 s: four of them are under the 15 s limit, the fifth goes over.
+            Run(sch, 0, 135, true, s);
+            Assert.AreEqual(12.4, sch.SecondsWithoutFix, 0.6);
+            Assert.IsFalse(sch.TimedOut(s));
+            Run(sch, 135.1, 170, true, s);
+            Assert.IsTrue(sch.TimedOut(s));
+        }
+
+        [Test]
+        public void ABurstIsRateLimited()
+        {
+            var s = Settings(StarLocalizer.Mode.Adaptive);
+            var sch = new LocalizerSchedule();
+            sch.Tick(0, true, Vector3.zero, 0f, s);
+            int taken = 0;
+            double last = double.NegativeInfinity;
+            for (int i = 0; 30 + i * 0.05 <= 33.0; i++)
+            {
+                double t = 30 + i * 0.05;
+                if (!sch.Tick(t, true, Vector3.zero, 0f, s) || !sch.ShouldInfer(t)) continue;
+                Assert.GreaterOrEqual(t - last, 0.25 - 1e-9, "two frames closer than 1 / maxInferenceHz");
+                sch.OnInferred(t, s);
+                last = t;
+                taken++;
+            }
+            Assert.AreEqual(12, taken, 1, "3 s at 4 Hz");
+        }
+
+        [Test]
+        public void TheEarlyTriggersAreOffAtZero()
+        {
+            var s = Settings(StarLocalizer.Mode.Adaptive);
+            s.refineDistanceMeters = 0f;
+            s.refineTurnDegrees = 0f;
+            var sch = new LocalizerSchedule();
+            sch.Tick(0, true, Vector3.zero, 0f, s);
+            Assert.IsFalse(sch.Tick(1, true, new Vector3(100f, 0f, 0f), 170f, s));
+            Assert.IsFalse(sch.Tick(29, true, new Vector3(-100f, 0f, 50f), -170f, s));
+            Assert.IsTrue(sch.Tick(30, true, Vector3.zero, 0f, s), "the period still works");
+        }
+
+        [Test]
+        public void EachEarlyTriggerWorksWithoutTheOther()
+        {
+            var s = Settings(StarLocalizer.Mode.Adaptive);
+            s.refineTurnDegrees = 0f;
+            var sch = new LocalizerSchedule();
+            sch.Tick(0, true, Vector3.zero, 0f, s);
+            Assert.IsFalse(sch.Tick(1, true, Vector3.zero, 170f, s), "turn trigger is off");
+            Assert.IsTrue(sch.Tick(2, true, new Vector3(3f, 0f, 0f), 170f, s));
+
+            s = Settings(StarLocalizer.Mode.Adaptive);
+            s.refineDistanceMeters = 0f;
+            sch = new LocalizerSchedule();
+            sch.Tick(0, true, Vector3.zero, 0f, s);
+            Assert.IsFalse(sch.Tick(1, true, new Vector3(30f, 0f, 0f), 0f, s), "distance trigger is off");
+            Assert.IsTrue(sch.Tick(2, true, new Vector3(30f, 0f, 0f), 90f, s));
         }
 
         // ---- tracking jump ----
@@ -158,10 +252,10 @@ namespace StageSettAR.Tests
         public void OnlyAPerFrameDiscontinuityIsAJump()
         {
             var sch = new LocalizerSchedule();
-            Assert.IsFalse(sch.TrackJump(new Vector3(50f, 0f, 0f), 1.5f), "the first sample has nothing to compare with");
-            Assert.IsFalse(sch.TrackJump(new Vector3(50.1f, 0f, 0f), 1.5f));
-            Assert.IsTrue(sch.TrackJump(new Vector3(52f, 0f, 0f), 1.5f));
-            Assert.IsFalse(sch.TrackJump(new Vector3(52.05f, 0f, 0f), 1.5f), "compared with the sample before, not the one before the jump");
+            Assert.IsFalse(sch.TrackJump(new Vector3(50f, 0f, 0f), 1.5f, 0.0), "the first sample has nothing to compare with");
+            Assert.IsFalse(sch.TrackJump(new Vector3(50.1f, 0f, 0f), 1.5f, 0.1));
+            Assert.IsTrue(sch.TrackJump(new Vector3(52f, 0f, 0f), 1.5f, 0.2));
+            Assert.IsFalse(sch.TrackJump(new Vector3(52.05f, 0f, 0f), 1.5f, 0.3), "compared with the sample before, not the one before the jump");
         }
 
         [Test]
@@ -169,9 +263,59 @@ namespace StageSettAR.Tests
         {
             var sch = new LocalizerSchedule();
             for (int i = 0; i < 100; i++)
-                Assert.IsFalse(sch.TrackJump(new Vector3(0.02f * i, 0f, 0f), 1.5f), "step " + i);   // 2 m of walking
-            sch.Reset();
-            Assert.IsFalse(sch.TrackJump(new Vector3(40f, 0f, 0f), 1.5f), "a reset forgets the last position");
+                Assert.IsFalse(sch.TrackJump(new Vector3(0.02f * i, 0f, 0f), 1.5f, 0.016 * i), "step " + i);   // 2 m of walking
+        }
+
+        [Test]
+        public void ResetKeepsTheJumpBaseline()
+        {
+            var sch = new LocalizerSchedule();
+            sch.TrackJump(Vector3.zero, 1.5f, 1.0);
+            sch.Reset();   // the component was disabled while tracking was reset
+            Assert.IsTrue(sch.TrackJump(new Vector3(40f, 0f, 0f), 1.5f, 500.0));
+        }
+
+        [Test]
+        public void ASampleTooLongAgoIsNotComparedWith()
+        {
+            var sch = new LocalizerSchedule();
+            sch.TrackJump(Vector3.zero, 1.5f, 0.0, 2.0);
+            Assert.IsFalse(sch.TrackJump(new Vector3(5f, 0f, 0f), 1.5f, 30.0, 2.0), "a walk during a rest");
+            Assert.IsTrue(sch.TrackJump(new Vector3(20f, 0f, 0f), 1.5f, 30.25, 2.0));
+        }
+
+        [Test]
+        public void OnlyFramesCapturedBeforeTheJumpAreStale()
+        {
+            var sch = new LocalizerSchedule();
+            Assert.IsFalse(sch.PredatesJump(0.0), "no jump yet");
+            sch.TrackJump(Vector3.zero, 1.5f, 10.0);
+            Assert.IsTrue(sch.TrackJump(new Vector3(5f, 0f, 0f), 1.5f, 10.1));
+            Assert.IsTrue(sch.PredatesJump(9.9), "captured before the last good sample");
+            Assert.IsFalse(sch.PredatesJump(10.05), "captured between the samples, so possibly after the reset");
+            Assert.IsFalse(sch.PredatesJump(10.2), "captured after the jump was seen");
+        }
+
+        [Test]
+        public void AFrameServedAtTheJumpIsNotStale()
+        {
+            // A source whose pose changes exactly when a frame is served (the scan source): the frame is stamped
+            // within the same rendered frame in which the new pose is first sampled.
+            var sch = new LocalizerSchedule();
+            sch.TrackJump(Vector3.zero, 1.5f, 10.00);
+            double frameStamp = 10.05;
+            Assert.IsTrue(sch.TrackJump(new Vector3(8f, 0f, 0f), 1.5f, 10.06));
+            Assert.IsFalse(sch.PredatesJump(frameStamp));
+        }
+
+        [Test]
+        public void ASecondJumpMovesTheCutoffForward()
+        {
+            var sch = new LocalizerSchedule();
+            sch.TrackJump(Vector3.zero, 1.5f, 1.0);
+            sch.TrackJump(new Vector3(5f, 0f, 0f), 1.5f, 2.0);
+            sch.TrackJump(new Vector3(-5f, 0f, 0f), 1.5f, 3.0);
+            Assert.IsTrue(sch.PredatesJump(2.5));
         }
 
         // ---- convergence ----
@@ -218,6 +362,17 @@ namespace StageSettAR.Tests
             wrap.Add(Vector3.zero, 350f);
             wrap.Add(Vector3.zero, 10f);
             Assert.AreEqual(20f, wrap.TurnDegrees, 1e-3f);
+        }
+
+        [Test]
+        public void TravelCountsOnlyAlongTheFloor()
+        {
+            var c = new CoverageTracker();
+            c.Add(new Vector3(0f, 0f, 0f), 0f);
+            c.Add(new Vector3(0f, 1.5f, 0f), 0f);   // crouching or standing on a step
+            Assert.AreEqual(0f, c.MoveMeters, 1e-4f);
+            c.Add(new Vector3(0.3f, 0.5f, 0.4f), 0f);
+            Assert.AreEqual(0.5f, c.MoveMeters, 1e-4f);
         }
 
         [Test]

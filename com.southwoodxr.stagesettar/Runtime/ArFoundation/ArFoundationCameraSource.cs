@@ -148,8 +148,9 @@ namespace StageSettAR
         public override bool TryGetCurrentPose(out Pose pose)
         {
             pose = Pose.identity;
-            if (_ringCount == 0) return false;
-            if (!_lensResolved) ResolveLens();
+            // Like Publish, wait until the first frame has resolved the lens: resolving it earlier could pick the phone
+            // lens on a headset whose XR device is not active yet.
+            if (_ringCount == 0 || !_lensResolved) return false;
             ref var newest = ref _ring[(_ringHead - 1 + RingSize) % RingSize];
             pose = ToSensorPose(new Pose(newest.position, newest.rotation));
             return true;

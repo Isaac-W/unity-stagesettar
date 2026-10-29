@@ -125,7 +125,8 @@ namespace StageSettAR
         /// <summary>Strictly increasing per new frame.</summary>
         public long id;
 
-        /// <summary>Capture time in seconds on the source's clock. Informational.</summary>
+        /// <summary>Capture time in seconds on Unity's <c>Time.realtimeSinceStartupAsDouble</c> clock, which the localizer compares
+        /// with the time of a tracking reset.</summary>
         public double timestamp;
 
         /// <summary>
@@ -209,7 +210,8 @@ namespace StageSettAR
         /// <summary>
         /// The camera's current tracked pose, relative to <see cref="TrackingSpace"/> and in the same convention as
         /// <see cref="CameraFrame.cameraPose"/>. Cheap and available every frame, without acquiring an image, so the
-        /// localizer can watch for tracking resets and movement while it is resting. False (the default) when unknown.
+        /// localizer can watch for tracking resets and movement while it is resting. False (the default) when unknown, and
+        /// the localizer then uses the pose of each frame it analyses instead.
         /// </summary>
         public virtual bool TryGetCurrentPose(out Pose pose)
         {
