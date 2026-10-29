@@ -129,7 +129,8 @@ namespace StageSettAR
         CameraIntrinsics _convK;
         Vector2Int _convSize;
 
-        double _lastStamp = double.NaN;
+        double _lastStamp = double.NaN;           // newest image counted towards the latency estimate
+        double _lastConvertedStamp = double.NaN;  // newest image handed to conversion, so it is not converted twice
         double _minDelta = double.NaN, _lastArrival;
 
         Pose _lens = Pose.identity;
@@ -215,8 +216,15 @@ namespace StageSettAR
 
             if (!_configChecked) SelectConfiguration();
             if (_converting) PollConversion();
+
+            // Every image is counted towards the latency estimate, wanted or not; only a wanted one is converted.
             // The first frame is fetched unasked because IsReady waits for it, and a consumer only asks once ready.
-            if (!_converting && (_wanted || _frame.id == 0)) TryBeginConversion();
+            if (!cameraManager.TryAcquireLatestCpuImage(out var cpu)) return;
+            using (cpu)
+            {
+                CountLatency(cpu.timestamp);
+                if (!_converting && (_wanted || _frame.id == 0)) TryBeginConversion(cpu);
+            } // disposing the image is safe while a conversion is in flight
         }
 
         // After TrackedPoseDriver (order 0), so the camera transform is already this frame's.
@@ -268,52 +276,58 @@ namespace StageSettAR
         static string Describe(XRCameraConfiguration c) =>
             $"{c.width}x{c.height} @ {(c.framerate.HasValue ? c.framerate.Value.ToString() : "unknown")} fps";
 
-        void TryBeginConversion()
+        /// <summary>
+        /// Feeds the minimum-delay estimate (see class remarks) with an image's timestamp. Called for every image the
+        /// camera delivers, so the estimate sees the full frame rate, and an image is only counted once.
+        /// </summary>
+        void CountLatency(double stamp)
         {
-            if (!cameraManager.TryAcquireLatestCpuImage(out var cpu)) return;
-            using (cpu)
+            if (stamp == _lastStamp) return; // same image as last update
+            _lastStamp = stamp;
+
+            double now = Time.realtimeSinceStartupAsDouble;
+            double delta = now - stamp;
+            // Let the minimum creep up so one early outlier cannot pin the estimate forever.
+            _minDelta = double.IsNaN(_minDelta) ? delta : Math.Min(delta, _minDelta + 0.0005 * (now - _lastArrival));
+            _lastArrival = now;
+        }
+
+        void TryBeginConversion(XRCpuImage cpu)
+        {
+            double stamp = cpu.timestamp;
+            if (stamp == _lastConvertedStamp) return; // same image as last conversion
+            _lastConvertedStamp = stamp;
+
+            // Fetched here, in the frame the image was acquired, so they belong to it. At the camera's own resolution.
+            if (!manualIntrinsics.TryResolve(cpu.width, cpu.height, out var native))
             {
-                double stamp = cpu.timestamp;
-                if (stamp == _lastStamp) return; // same image as last poll
-                _lastStamp = stamp;
+                if (!cameraManager.TryGetIntrinsics(out var xr) || xr.resolution.x <= 0) return;
+                native = new CameraIntrinsics(xr.focalLength.x, xr.focalLength.y,
+                                              xr.principalPoint.x, xr.principalPoint.y,
+                                              xr.resolution.x, xr.resolution.y).Scaled(cpu.width, cpu.height);
+            }
+            if (!native.IsValid) return;
 
-                double now = Time.realtimeSinceStartupAsDouble;
-                double delta = now - stamp;
-                // Let the minimum creep up so one early outlier cannot pin the estimate forever.
-                _minDelta = double.IsNaN(_minDelta) ? delta : Math.Min(delta, _minDelta + 0.0005 * (now - _lastArrival));
-                _lastArrival = now;
+            if (debug.logDiagnostics && !_loggedDiagnostics)
+            {
+                _loggedDiagnostics = true;
+                LogDiagnostics(cpu, native);
+            }
 
-                // Fetched here, in the frame the image was acquired, so they belong to it. At the camera's own resolution.
-                if (!manualIntrinsics.TryResolve(cpu.width, cpu.height, out var native))
-                {
-                    if (!cameraManager.TryGetIntrinsics(out var xr) || xr.resolution.x <= 0) return;
-                    native = new CameraIntrinsics(xr.focalLength.x, xr.focalLength.y,
-                                                  xr.principalPoint.x, xr.principalPoint.y,
-                                                  xr.resolution.x, xr.resolution.y).Scaled(cpu.width, cpu.height);
-                }
-                if (!native.IsValid) return;
+            if (image.gpuYuvConversion && !_yuvFailed && TryPublishYuv(cpu, native, stamp)) return;
 
-                if (debug.logDiagnostics && !_loggedDiagnostics)
-                {
-                    _loggedDiagnostics = true;
-                    LogDiagnostics(cpu, native);
-                }
+            if (!cpu.FormatSupported(TextureFormat.RGBA32)) return;
 
-                if (image.gpuYuvConversion && !_yuvFailed && TryPublishYuv(cpu, native, stamp)) return;
-
-                if (!cpu.FormatSupported(TextureFormat.RGBA32)) return;
-
-                var size = ConversionSize(cpu.width, cpu.height, Mathf.Min(native.fx, native.fy));
-                _conversion = cpu.ConvertAsync(new XRCpuImage.ConversionParams(cpu, TextureFormat.RGBA32)
-                {
-                    outputDimensions = size,
-                    transformation = XRCpuImage.Transformation.None,
-                });
-                _converting = true;
-                _convStamp = stamp;
-                _convK = native.Scaled(size.x, size.y);
-                _convSize = size;
-            } // disposing the image is safe while the conversion is in flight
+            var size = ConversionSize(cpu.width, cpu.height, Mathf.Min(native.fx, native.fy));
+            _conversion = cpu.ConvertAsync(new XRCpuImage.ConversionParams(cpu, TextureFormat.RGBA32)
+            {
+                outputDimensions = size,
+                transformation = XRCpuImage.Transformation.None,
+            });
+            _converting = true;
+            _convStamp = stamp;
+            _convK = native.Scaled(size.x, size.y);
+            _convSize = size;
         }
 
         /// <summary>
