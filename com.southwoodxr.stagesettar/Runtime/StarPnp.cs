@@ -16,7 +16,7 @@ namespace StageSettAR
         public double reselectPx;
         /// <summary>Fewest final inliers for <see cref="PnpResult.success"/>.</summary>
         public int minInliers;
-        /// <summary>0 draws a different RANSAC sequence on every Solve; any other value restarts the same sequence on each Solve, so results are reproducible.</summary>
+        /// <summary>0 draws a different RANSAC sequence on every Solve; any other value restarts the same sequence on each Solve of an instance, so results are reproducible.</summary>
         public int seed;
 
         public static PnpSettings Default => new PnpSettings
@@ -52,7 +52,8 @@ namespace StageSettAR
     /// </summary>
     /// <remarks>
     /// Differences from star-mobile: hypotheses are drawn PROSAC-style (best-scored detections
-    /// first, as in its Rust solver), and an optional prior pose is scored as the first
+    /// first, as in its Rust solver) until the sample pool covers every detection or a hypothesis
+    /// with enough inliers appears, then uniformly. An optional prior pose is scored as the first
     /// hypothesis so a good tracking-predicted pose wins without needing a lucky sample.
     /// All working memory is allocated in the constructor; <see cref="Solve"/> never allocates
     /// and uses no Unity API, so it may run on a background thread. One instance is not
@@ -86,7 +87,7 @@ namespace StageSettAR
         int n;
 
         // RANSAC state.
-        Model best; double bestScore; int iterCap, growth, done, uniformFrom, stopAfter;
+        Model best; double bestScore; int iterCap, uniformFrom, stopAfter;
         bool haveBest;
 
         public StarPnp(int maxCorrespondences, PnpSettings settings)
@@ -166,11 +167,14 @@ namespace StageSettAR
 
         /// <summary>
         /// The camera-to-world poses P3P gives for the first three correspondences (up to four, into
-        /// <paramref name="R"/>/<paramref name="t"/>). Returns the count. Exposed for tests.
+        /// <paramref name="R"/>/<paramref name="t"/>). Returns the count. Internal for tests: it overwrites
+        /// the working buffers, so it must not run while <see cref="Solve"/> does.
         /// </summary>
-        public int SolveP3p(Vector3d[] pts3, Vector2d[] pts2, double fx, double fy, double cx, double cy,
-                            Matrix3x3d[] R, Vector3d[] t)
+        internal int SolveP3p(Vector3d[] pts3, Vector2d[] pts2, double fx, double fy, double cx, double cy,
+                              Matrix3x3d[] R, Vector3d[] t)
         {
+            if (pts3.Length < 3 || pts2.Length < 3) throw new ArgumentException("P3P needs at least 3 points.");
+            if (R.Length < 4 || t.Length < 4) throw new ArgumentException("P3P can return up to 4 poses.");
             X = pts3; uv = pts2;
             this.fx = fx; this.fy = fy; this.cx = cx; this.cy = cy;
             for (int i = 0; i < 3; i++) bearing[i] = Bearing(i);
@@ -190,9 +194,9 @@ namespace StageSettAR
             // With only a few points there are few distinct samples, so a few passes over all triples is enough.
             long triples = (long)n * (n - 1) * (n - 2) / 6;
             iterCap = (int)Math.Min(s.maxIterations, 3 * triples);
-            growth = Math.Min(ProsacIterations, iterCap);
+            int growth = Math.Min(ProsacIterations, iterCap);
             // The adaptive bound assumes uniform sampling, so it only counts iterations after sampling turns uniform.
-            uniformFrom = -1; done = 0; stopAfter = iterCap;
+            uniformFrom = -1; stopAfter = iterCap;
             haveBest = false; bestScore = double.PositiveInfinity;
             rng = 0x9E3779B97F4A7C15UL * (s.seed != 0 ? (ulong)(uint)s.seed : seedCounter++);
 
@@ -202,17 +206,17 @@ namespace StageSettAR
             if (priorR.HasValue && priorT.HasValue)
             {
                 Matrix3x3d rw = priorR.Value.Transpose();
-                Consider(new Model { R = rw, t = -(rw * priorT.Value) });
+                Consider(new Model { R = rw, t = -(rw * priorT.Value) }, 0);
             }
 
             for (int it = 0; it < iterCap; it++)
             {
-                if (uniformFrom >= 0 && it - uniformFrom >= stopAfter) break;
-                done = it + 1;
                 int a, b, c;
                 // PROSAC growth: the sample pool starts at the 3 best detections and grows to all of them,
                 // until a good hypothesis is found; from then on every point is drawn uniformly.
                 int m = uniformFrom < 0 && it < growth ? Math.Min(n, 3 + (int)((long)(n - 3) * (it + 1) / growth)) : n;
+                if (uniformFrom < 0 && m == n) uniformFrom = it;
+                if (uniformFrom >= 0 && it - uniformFrom >= stopAfter) break;
                 if (m < n)
                 {
                     c = m - 1;
@@ -229,7 +233,7 @@ namespace StageSettAR
                     if (c >= hi) c++;
                 }
                 int count = P3p(order[a], order[b], order[c]);
-                for (int k = 0; k < count; k++) Consider(new Model { R = solR[k], t = solT[k] });
+                for (int k = 0; k < count; k++) Consider(new Model { R = solR[k], t = solT[k] }, it);
             }
 
             return haveBest && CollectInliers(best, s.ransacThresholdPx) >= MinPoints;
@@ -243,8 +247,11 @@ namespace StageSettAR
             return rng * 0x2545F4914F6CDD1DUL;
         }
 
-        /// <summary>Scores a hypothesis (MSAC), tries a local optimisation, keeps it if best, updates the stopping bound.</summary>
-        void Consider(Model m)
+        /// <summary>
+        /// Scores a hypothesis (MSAC), tries a local optimisation, keeps it if best, updates the stopping bound.
+        /// <paramref name="it"/> is the current iteration, where sampling turns uniform if the hypothesis is good enough.
+        /// </summary>
+        void Consider(Model m, int it)
         {
             if (!Score(m, bestScore, out double cost, out int count)) return;
             if (count >= 6)
@@ -255,7 +262,7 @@ namespace StageSettAR
             }
             best = m; bestScore = cost; haveBest = true;
             double w = (double)count / n;
-            if (uniformFrom < 0 && (w >= UniformFromInlierFraction || done >= growth)) uniformFrom = done;
+            if (uniformFrom < 0 && w >= UniformFromInlierFraction) uniformFrom = it;
             double all = w * w * w;
             double need = all < 1e-12 ? iterCap : Math.Log(1 - s.confidence) / Math.Log(1 - Math.Min(all, 1 - 1e-12));
             stopAfter = Math.Max(1, (int)Math.Min(iterCap, Math.Ceiling(need)));
@@ -382,7 +389,8 @@ namespace StageSettAR
                 if (flo * fhi > 0)
                 {
                     // A tangent (double) root is a critical point where f touches zero without changing sign.
-                    if (k > 0 && Math.Abs(flo) <= 1e-9 * mx) r[count++] = lo;
+                    bool duplicate = count > 0 && lo - r[count - 1] <= 1e-9 * Math.Max(1, Math.Abs(lo));
+                    if (k > 0 && Math.Abs(flo) <= 1e-9 * mx && !duplicate) r[count++] = lo;
                     continue;
                 }
                 for (int it = 0; it < 100 && hi - lo > 1e-15 * Math.Max(1, Math.Abs(lo)); it++)

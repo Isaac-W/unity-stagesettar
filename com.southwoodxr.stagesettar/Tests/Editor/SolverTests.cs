@@ -300,6 +300,7 @@ namespace StageSettAR.Tests
             PnpResult r1 = a.Solve(s.n, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
             PnpResult r2 = a.Solve(s.n, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
             PnpResult r3 = b.Solve(s.n, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
+            // Same seed and same inputs run the same deterministic code, so the doubles must match bit for bit.
             foreach (PnpResult r in new[] { r2, r3 })
             {
                 Assert.AreEqual(r1.t.x, r.t.x);
@@ -313,18 +314,19 @@ namespace StageSettAR.Tests
         [Test]
         public void PnpRefitWeightsDetectionsByScoreSquared()
         {
-            // Half the detections are shifted 4 px but have a tenth of the score. Weighted by score^2 they pull the
-            // first refit by about 0.04 px, so a tight re-selection gate keeps only the true half. Unweighted, the
-            // pose would settle in between and every point would be about 2 px off.
+            // Half the detections are shifted 3 px (beyond the 2 px Huber knee) and have a fifth of the score.
+            // Only the weighted first refit sees the score: with score^2 weights the true points end up almost
+            // exactly on the pose, with score weights or none they are pulled well past the tight re-selection
+            // gate, so the true half would be lost. The final refit is unweighted and cannot repair that.
             PnpScene s = MakePnpScene(73, 0, 0);
             int trueCount = 0;
             for (int i = 0; i < s.n; i++)
             {
                 if (i % 2 == 0) { s.score[i] = 1; trueCount++; }
-                else { s.score[i] = 0.1; s.p2[i] = new Vector2d(s.p2[i].x + 4, s.p2[i].y); }
+                else { s.score[i] = 0.2; s.p2[i] = new Vector2d(s.p2[i].x + 3, s.p2[i].y); }
             }
             PnpSettings settings = PnpSettings.Default;
-            settings.reselectPx = 1.5;
+            settings.reselectPx = 0.25;
             var pnp = new StarPnp(300, settings);
             PnpResult res = pnp.Solve(s.n, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
             AssertPose(res, s, 1e-3, 0.05);
