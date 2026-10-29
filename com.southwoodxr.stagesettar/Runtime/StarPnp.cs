@@ -16,11 +16,13 @@ namespace StageSettAR
         public double reselectPx;
         /// <summary>Fewest final inliers for <see cref="PnpResult.success"/>.</summary>
         public int minInliers;
+        /// <summary>0 draws a different RANSAC sequence on every Solve; any other value restarts the same sequence on each Solve, so results are reproducible.</summary>
+        public int seed;
 
         public static PnpSettings Default => new PnpSettings
         {
             ransacThresholdPx = 8, confidence = 0.99, maxIterations = 5000,
-            huberPx = 2, reselectPx = 8, minInliers = 6,
+            huberPx = 2, reselectPx = 8, minInliers = 6, seed = 0,
         };
     }
 
@@ -45,7 +47,8 @@ namespace StageSettAR
     /// <summary>
     /// Robust PnP for STAR detections, a port of star-mobile's pnp.ts and confidence.ts:
     /// P3P (Grunert) inside MSAC RANSAC, then a Huber refit weighted by score^2, one re-selection
-    /// round and an unweighted Huber refit.
+    /// round and an unweighted Huber refit. The Huber knee is in pixels and the weight multiplies
+    /// the loss, so it does not move the knee.
     /// </summary>
     /// <remarks>
     /// Differences from star-mobile: hypotheses are drawn PROSAC-style (best-scored detections
@@ -59,6 +62,7 @@ namespace StageSettAR
     {
         const int MinPoints = 4;       // P3P needs 3, plus one to disambiguate
         const int ProsacIterations = 1500;
+        const double UniformFromInlierFraction = 0.3;   // PROSAC sampling ends at the first hypothesis this good
         const int MaxHypotheses = 5000 * 4;
 
         struct Model { public Matrix3x3d R; public Vector3d t; }   // world-to-camera: p = R X + t
@@ -82,7 +86,7 @@ namespace StageSettAR
         int n;
 
         // RANSAC state.
-        Model best; double bestScore; int iters;
+        Model best; double bestScore; int iterCap, growth, done, uniformFrom, stopAfter;
         bool haveBest;
 
         public StarPnp(int maxCorrespondences, PnpSettings settings)
@@ -118,40 +122,33 @@ namespace StageSettAR
 
             X = pts3; uv = pts2; score = scores;
             this.fx = fx; this.fy = fy; this.cx = cx; this.cy = cy; this.n = n;
-            for (int i = 0; i < n; i++)
-            {
-                var b = new Vector3d((uv[i].x - cx) / fx, (uv[i].y - cy) / fy, 1);
-                bearing[i] = (1.0 / b.Length) * b;
-            }
+            for (int i = 0; i < n; i++) bearing[i] = Bearing(i);
 
             if (!Ransac(priorR, priorT)) return result;
 
             // Refit 1: Huber over the RANSAC inliers, weighted by score^2.
-            double th = s.ransacThresholdPx;
-            int cnt = CollectInliers(best, th);
+            int cnt = CollectInliers(best, s.ransacThresholdPx);
             Model m = Refine(best, cnt, true, s.huberPx, 60);
 
             // One re-selection round against all correspondences, then an unweighted refit.
-            ComputeErrors(m);
-            cnt = 0;
-            for (int i = 0; i < n; i++) if (err[i] <= s.reselectPx) idx[cnt++] = i;
+            cnt = CollectInliers(m, s.reselectPx);
             if (cnt >= MinPoints) m = Refine(m, cnt, false, s.huberPx, 60);
-            else cnt = CollectInliers(m, th);
 
-            ComputeErrors(m);
-            int inl = 0; double ssq = 0;
+            // The reported inliers are those of the final pose (points behind the camera never pass).
+            cnt = CollectInliers(m, s.reselectPx);
+            double ssq = 0;
             for (int k = 0; k < cnt; k++)
             {
                 int i = idx[k];
                 mask[i] = true;
-                if (!double.IsInfinity(err[i])) { ssq += err[i] * err[i]; inl++; }
+                ssq += err[i] * err[i];
             }
 
             Matrix3x3d rc = m.R.Transpose();
             result.R = rc;
             result.t = -(rc * m.t);
             result.inliers = cnt;
-            result.rmsPx = inl > 0 ? Math.Sqrt(ssq / inl) : double.PositiveInfinity;
+            result.rmsPx = cnt > 0 ? Math.Sqrt(ssq / cnt) : double.PositiveInfinity;
             Uncertainty(m, cnt, out double posM, out double rotDeg);
             result.positionSigma = posM;
             result.rotationSigmaDeg = rotDeg;
@@ -161,12 +158,43 @@ namespace StageSettAR
             return result;
         }
 
+        Vector3d Bearing(int i)
+        {
+            var b = new Vector3d((uv[i].x - cx) / fx, (uv[i].y - cy) / fy, 1);
+            return (1.0 / b.Length) * b;
+        }
+
+        /// <summary>
+        /// The camera-to-world poses P3P gives for the first three correspondences (up to four, into
+        /// <paramref name="R"/>/<paramref name="t"/>). Returns the count. Exposed for tests.
+        /// </summary>
+        public int SolveP3p(Vector3d[] pts3, Vector2d[] pts2, double fx, double fy, double cx, double cy,
+                            Matrix3x3d[] R, Vector3d[] t)
+        {
+            X = pts3; uv = pts2;
+            this.fx = fx; this.fy = fy; this.cx = cx; this.cy = cy;
+            for (int i = 0; i < 3; i++) bearing[i] = Bearing(i);
+            int count = P3p(0, 1, 2);
+            for (int k = 0; k < count; k++)
+            {
+                R[k] = solR[k].Transpose();
+                t[k] = -(R[k] * solT[k]);
+            }
+            return count;
+        }
+
         // ---- RANSAC ----
 
         bool Ransac(Matrix3x3d? priorR, Vector3d? priorT)
         {
-            haveBest = false; bestScore = double.PositiveInfinity; iters = s.maxIterations;
-            rng = 0x9E3779B97F4A7C15UL * seedCounter++;
+            // With only a few points there are few distinct samples, so a few passes over all triples is enough.
+            long triples = (long)n * (n - 1) * (n - 2) / 6;
+            iterCap = (int)Math.Min(s.maxIterations, 3 * triples);
+            growth = Math.Min(ProsacIterations, iterCap);
+            // The adaptive bound assumes uniform sampling, so it only counts iterations after sampling turns uniform.
+            uniformFrom = -1; done = 0; stopAfter = iterCap;
+            haveBest = false; bestScore = double.PositiveInfinity;
+            rng = 0x9E3779B97F4A7C15UL * (s.seed != 0 ? (ulong)(uint)s.seed : seedCounter++);
 
             for (int i = 0; i < n; i++) { order[i] = i; sortKey[i] = -score[i]; }
             Array.Sort(sortKey, order, 0, n);   // best score first
@@ -177,11 +205,14 @@ namespace StageSettAR
                 Consider(new Model { R = rw, t = -(rw * priorT.Value) });
             }
 
-            for (int it = 0; it < iters; it++)
+            for (int it = 0; it < iterCap; it++)
             {
+                if (uniformFrom >= 0 && it - uniformFrom >= stopAfter) break;
+                done = it + 1;
                 int a, b, c;
-                // PROSAC growth: the sample pool starts at the 3 best detections and grows to all of them.
-                int m = it < ProsacIterations ? Math.Min(n, 3 + (int)((long)(n - 3) * (it + 1) / ProsacIterations)) : n;
+                // PROSAC growth: the sample pool starts at the 3 best detections and grows to all of them,
+                // until a good hypothesis is found; from then on every point is drawn uniformly.
+                int m = uniformFrom < 0 && it < growth ? Math.Min(n, 3 + (int)((long)(n - 3) * (it + 1) / growth)) : n;
                 if (m < n)
                 {
                     c = m - 1;
@@ -215,33 +246,37 @@ namespace StageSettAR
         /// <summary>Scores a hypothesis (MSAC), tries a local optimisation, keeps it if best, updates the stopping bound.</summary>
         void Consider(Model m)
         {
-            Score(m, out double cost, out int count);
-            if (cost >= bestScore) return;
+            if (!Score(m, bestScore, out double cost, out int count)) return;
             if (count >= 6)
             {
                 int k = CollectInliers(m, s.ransacThresholdPx);
                 Model m2 = Refine(m, k, false, double.PositiveInfinity, 10);
-                Score(m2, out double c2, out int n2);
-                if (c2 < cost) { m = m2; cost = c2; count = n2; }
+                if (Score(m2, cost, out double c2, out int n2)) { m = m2; cost = c2; count = n2; }
             }
             best = m; bestScore = cost; haveBest = true;
             double w = (double)count / n;
-            double need = Math.Log(1 - s.confidence) / Math.Log(Math.Max(1e-12, 1 - w * w * w));
-            iters = (int)Math.Min(s.maxIterations, Math.Max(0, Math.Ceiling(need)));
-            iters = Math.Max(iters, 1);
+            if (uniformFrom < 0 && (w >= UniformFromInlierFraction || done >= growth)) uniformFrom = done;
+            double all = w * w * w;
+            double need = all < 1e-12 ? iterCap : Math.Log(1 - s.confidence) / Math.Log(1 - Math.Min(all, 1 - 1e-12));
+            stopAfter = Math.Max(1, (int)Math.Min(iterCap, Math.Ceiling(need)));
         }
 
-        void Score(in Model m, out double cost, out int count)
+        /// <summary>
+        /// MSAC cost of a hypothesis. Returns false as soon as the running cost reaches <paramref name="limit"/>,
+        /// since such a hypothesis cannot beat the best one.
+        /// </summary>
+        bool Score(in Model m, double limit, out double cost, out int count)
         {
             double th = s.ransacThresholdPx, th2 = th * th;
             cost = 0; count = 0;
             for (int i = 0; i < n; i++)
             {
-                double e = Error(m, i);
-                err[i] = e;
-                if (e <= th) { cost += e * e; count++; }
+                double e2 = ErrorSq(m, i);
+                if (e2 <= th2) { cost += e2; count++; }
                 else cost += th2;
+                if (cost >= limit) return false;
             }
+            return true;
         }
 
         int CollectInliers(in Model m, double th)
@@ -255,16 +290,17 @@ namespace StageSettAR
             return cnt;
         }
 
-        void ComputeErrors(in Model m) { for (int i = 0; i < n; i++) err[i] = Error(m, i); }
+        double Error(in Model m, int i) => Math.Sqrt(ErrorSq(m, i));
 
-        double Error(in Model m, int i)
+        /// <summary>Squared reprojection error in pixels, infinity when the point is behind the camera.</summary>
+        double ErrorSq(in Model m, int i)
         {
             Vector3d p = X[i];
             double pz = m.R.m20 * p.x + m.R.m21 * p.y + m.R.m22 * p.z + m.t.z;
             if (!(pz > 0)) return double.PositiveInfinity;
             double du = fx * (m.R.m00 * p.x + m.R.m01 * p.y + m.R.m02 * p.z + m.t.x) / pz + cx - uv[i].x;
             double dv = fy * (m.R.m10 * p.x + m.R.m11 * p.y + m.R.m12 * p.z + m.t.y) / pz + cy - uv[i].y;
-            return Math.Sqrt(du * du + dv * dv);
+            return du * du + dv * dv;
         }
 
         // ---- P3P (Grunert / Haralick et al. 1994) ----
@@ -343,7 +379,12 @@ namespace StageSettAR
                 double lo = pts[k], hi = pts[k + 1];
                 double flo = Horner(c4, c3, c2, c1, c0, lo), fhi = Horner(c4, c3, c2, c1, c0, hi);
                 if (flo == 0) { r[count++] = lo; continue; }
-                if (flo * fhi > 0) continue;
+                if (flo * fhi > 0)
+                {
+                    // A tangent (double) root is a critical point where f touches zero without changing sign.
+                    if (k > 0 && Math.Abs(flo) <= 1e-9 * mx) r[count++] = lo;
+                    continue;
+                }
                 for (int it = 0; it < 100 && hi - lo > 1e-15 * Math.Max(1, Math.Abs(lo)); it++)
                 {
                     double mid = 0.5 * (lo + hi), fm = Horner(c4, c3, c2, c1, c0, mid);
@@ -412,7 +453,7 @@ namespace StageSettAR
 
         /// <summary>
         /// Refines a world-to-camera pose over idx[0..cnt) with left-multiplied rotation updates.
-        /// Residuals are sqrt(w)(proj - uv) with the Huber loss on each coordinate; w = score^2 when weighted.
+        /// The loss is w * Huber(proj - uv) on each pixel coordinate, with w = score^2 when weighted and 1 otherwise.
         /// </summary>
         Model Refine(Model m, int cnt, bool weighted, double huber, int maxEval)
         {
@@ -467,8 +508,8 @@ namespace StageSettAR
                 double py = m.R.m10 * p.x + m.R.m11 * p.y + m.R.m12 * p.z + m.t.y;
                 double pz = m.R.m20 * p.x + m.R.m21 * p.y + m.R.m22 * p.z + m.t.z;
                 if (!(pz > 0)) return double.PositiveInfinity;
-                double sw = weighted ? score[i] : 1;
-                c += Rho(sw * (fx * px / pz + cx - uv[i].x), f) + Rho(sw * (fy * py / pz + cy - uv[i].y), f);
+                double w = weighted ? score[i] * score[i] : 1;
+                c += w * (Rho(fx * px / pz + cx - uv[i].x, f) + Rho(fy * py / pz + cy - uv[i].y, f));
             }
             return double.IsNaN(c) ? double.PositiveInfinity : c;
         }
@@ -486,22 +527,22 @@ namespace StageSettAR
                 double qz = m.R.m20 * p.x + m.R.m21 * p.y + m.R.m22 * p.z;
                 double px = qx + m.t.x, py = qy + m.t.y, pz = qz + m.t.z;
                 if (!(pz > 0)) continue;
-                double sw = weighted ? score[i] : 1;
-                double r0 = sw * (fx * px / pz + cx - uv[i].x), r1 = sw * (fy * py / pz + cy - uv[i].y);
+                double w = weighted ? score[i] * score[i] : 1;
+                double r0 = fx * px / pz + cx - uv[i].x, r1 = fy * py / pz + cy - uv[i].y;
                 // d p / d omega = -[q]x, d p / d tau = I
-                double a0 = sw * fx / pz, a2 = -sw * fx * px / (pz * pz);
-                double b1 = sw * fy / pz, b2 = -sw * fy * py / (pz * pz);
+                double a0 = fx / pz, a2 = -fx * px / (pz * pz);
+                double b1 = fy / pz, b2 = -fy * py / (pz * pz);
                 j0[0] = a2 * qy; j0[1] = a0 * qz - a2 * qx; j0[2] = -a0 * qy; j0[3] = a0; j0[4] = 0; j0[5] = a2;
                 j1[0] = -b1 * qz + b2 * qy; j1[1] = -b2 * qx; j1[2] = b1 * qx; j1[3] = 0; j1[4] = b1; j1[5] = b2;
-                AddRow(j0, r0, f);
-                AddRow(j1, r1, f);
+                AddRow(j0, r0, w, f);
+                AddRow(j1, r1, w, f);
             }
             for (int i = 0; i < 6; i++) for (int j = 0; j < i; j++) H[i * 6 + j] = H[j * 6 + i];
         }
 
-        void AddRow(double[] j, double r, double f)
+        void AddRow(double[] j, double r, double w, double f)
         {
-            double a = Math.Abs(r), om = a <= f ? 1 : f / a;
+            double a = Math.Abs(r), om = w * (a <= f ? 1 : f / a);
             for (int i = 0; i < 6; i++)
             {
                 g[i] += om * j[i] * r;

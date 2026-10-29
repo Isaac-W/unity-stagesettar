@@ -257,6 +257,81 @@ namespace StageSettAR.Tests
             Assert.IsFalse(pnp.Solve(5, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H).success, "fewer than minInliers");
         }
 
+        [Test]
+        public void P3pRecoversThePoseFromThreePoints()
+        {
+            PnpScene s = MakePnpScene(70, 0, 0);
+            var pnp = new StarPnp(10, PnpSettings.Default);
+            var R = new Matrix3x3d[4];
+            var t = new Vector3d[4];
+            int count = pnp.SolveP3p(s.p3, s.p2, Fx, Fy, Cx, Cy, R, t);
+            Assert.GreaterOrEqual(count, 1);
+            Assert.LessOrEqual(count, 4);
+            bool found = false;
+            for (int k = 0; k < count; k++)
+            {
+                Matrix3x3d d = s.R.Transpose() * R[k];
+                double deg = Math.Acos(Math.Max(-1, Math.Min(1, (d.Trace - 1) / 2))) * 180 / Math.PI;
+                found |= (t[k] - s.t).Length < 1e-5 && deg < 1e-3;
+            }
+            Assert.IsTrue(found, "one of the P3P solutions is the true pose");
+        }
+
+        [Test]
+        public void PnpSolvesWithExactlyFourCorrespondences()
+        {
+            PnpScene s = MakePnpScene(71, 0, 0);
+            PnpSettings settings = PnpSettings.Default;
+            settings.minInliers = 4;
+            var pnp = new StarPnp(10, settings);
+            PnpResult res = pnp.Solve(4, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
+            AssertPose(res, s, 1e-3, 0.05);
+            Assert.AreEqual(4, res.inliers);
+        }
+
+        [Test]
+        public void PnpIsReproducibleWithAFixedSeed()
+        {
+            PnpScene s = MakePnpScene(72, 0.5, 0.5);
+            PnpSettings settings = PnpSettings.Default;
+            settings.seed = 12345;
+            var a = new StarPnp(300, settings);
+            var b = new StarPnp(300, settings);
+            PnpResult r1 = a.Solve(s.n, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
+            PnpResult r2 = a.Solve(s.n, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
+            PnpResult r3 = b.Solve(s.n, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
+            foreach (PnpResult r in new[] { r2, r3 })
+            {
+                Assert.AreEqual(r1.t.x, r.t.x);
+                Assert.AreEqual(r1.t.y, r.t.y);
+                Assert.AreEqual(r1.t.z, r.t.z);
+                Assert.AreEqual(r1.inliers, r.inliers);
+                Assert.AreEqual(r1.confidence, r.confidence);
+            }
+        }
+
+        [Test]
+        public void PnpRefitWeightsDetectionsByScoreSquared()
+        {
+            // Half the detections are shifted 4 px but have a tenth of the score. Weighted by score^2 they pull the
+            // first refit by about 0.04 px, so a tight re-selection gate keeps only the true half. Unweighted, the
+            // pose would settle in between and every point would be about 2 px off.
+            PnpScene s = MakePnpScene(73, 0, 0);
+            int trueCount = 0;
+            for (int i = 0; i < s.n; i++)
+            {
+                if (i % 2 == 0) { s.score[i] = 1; trueCount++; }
+                else { s.score[i] = 0.1; s.p2[i] = new Vector2d(s.p2[i].x + 4, s.p2[i].y); }
+            }
+            PnpSettings settings = PnpSettings.Default;
+            settings.reselectPx = 1.5;
+            var pnp = new StarPnp(300, settings);
+            PnpResult res = pnp.Solve(s.n, s.p3, s.p2, s.score, Fx, Fy, Cx, Cy, W, H);
+            AssertPose(res, s, 1e-3, 0.05);
+            Assert.AreEqual(trueCount, res.inliers);
+            for (int i = 0; i < s.n; i++) Assert.AreEqual(i % 2 == 0, pnp.InlierMask[i], "point " + i);
+        }
+
         // ---- alignment ----
 
         struct AlignScene
