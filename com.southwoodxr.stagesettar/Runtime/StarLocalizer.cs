@@ -81,8 +81,8 @@ namespace StageSettAR
             public BackendType backend = BackendType.GPUCompute;
             [Tooltip("Network layers run per rendered frame, so no single frame pays for the whole network. 0 runs it all in one frame.")]
             public int layersPerFrame = 10;
-            [Tooltip("Most pixels the network sees (500000 is about 800 x 600); a larger image is cropped to its centre. 0 means no limit.")]
-            public int maxInputPixels = 500000;
+            [Tooltip("1 feeds the network the map's trained focal length. Lower values shrink the whole image for speed but move away from the trained scale, so fewer landmarks are found.")]
+            [Range(0.25f, 1f)] public float inputScale = 1f;
             [Tooltip("Pose-solver tuning. The defaults work for the Quest camera.")]
             public PnpSettings pnp = PnpSettings.Default;
             [Tooltip("How recent fixes are combined into one alignment. The defaults average the last 30 fixes (at most a minute old), which smooths noise without trusting drifting tracking for long.")]
@@ -271,7 +271,7 @@ namespace StageSettAR
                 Fail($"Map '{map.name}' has {map.LandmarkCount} landmarks; at least 4 are needed to solve a pose.");
                 return;
             }
-            cameraSource.TargetFocal = map.focal;
+            cameraSource.TargetFocal = map.focal * advanced.inputScale;
             _cts?.Cancel();
             _cts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
             _solver =new AlignmentSolver(advanced.alignment, map);
@@ -368,7 +368,7 @@ namespace StageSettAR
                     CheckJump(frame.cameraPose.position, now);
 
                     _detector.LayersPerFrame = advanced.layersPerFrame;
-                    _detector.MaxInputPixels = advanced.maxInputPixels;
+                    _detector.InputScale = advanced.inputScale;
                     Detections d = await _detector.DetectAsync(frame, ct);
                     await ProcessFrame(work, frame, d, ct);
                     ct.ThrowIfCancellationRequested();

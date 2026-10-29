@@ -88,21 +88,31 @@ namespace StageSettAR.Tests
         }
 
         [Test]
-        public void PixelCapShrinksTheCropAndKeepsTheAspect()
+        public void InputScaleShrinksTheWholeImage()
         {
             var k = new CameraIntrinsics(500f, 500f, 639.5f, 479.5f, 1280, 960);
             var g = StarDetector.Geometry(k, 1280, 960, 0, 500f);     // scale 1: 1280 x 960
             Assert.AreEqual(1280, g.outW);
             Assert.AreEqual(960, g.outH);
 
-            g = StarDetector.Geometry(k, 1280, 960, 0, 500f, 300000);
+            g = StarDetector.Geometry(k, 1280, 960, 0, 500f, 0.5f);   // 640 x 480 after scaling
+            Assert.AreEqual(0.5f, g.scale, 1e-6f);
+            Assert.AreEqual(250f, g.net.fx, 1e-3f);                   // half the map focal
             Assert.AreEqual(0, g.outW % 16);
             Assert.AreEqual(0, g.outH % 16);
-            Assert.LessOrEqual(g.outW * g.outH, 300000);
-            Assert.AreEqual(1280f / 960f, (float)g.outW / g.outH, 0.05f);
-            Assert.AreEqual(1f, g.scale, 1e-6f);                      // the cap crops, it does not rescale
-            Assert.AreEqual((1280 - g.outW) / 2f, g.x0, 1e-3f);
+            Assert.AreEqual(640, g.outW);
+            Assert.AreEqual(480, g.outH);
+            // the whole image is used, up to a crop of under 16 scaled pixels per axis
+            Assert.AreEqual(1280f, g.cropW + 2 * g.x0, 1e-3f);
+            Assert.Less(g.cropW * g.scale, 640f + 16f);
             Assert.AreEqual(g.outW, g.net.width);
+
+            g = StarDetector.Geometry(k, 1280, 960, 0, 500f, 0.75f);  // 960 x 720 scaled, already multiples of 16
+            Assert.AreEqual(0, g.outW % 16);
+            Assert.AreEqual(0, g.outH % 16);
+            Assert.GreaterOrEqual(g.outW, 1280 * 0.75f - 16f);
+            Assert.GreaterOrEqual(g.outH, 960 * 0.75f - 16f);
+            Assert.AreEqual((1280 - g.cropW) / 2f, g.x0, 1e-3f);
         }
 
         [Test]

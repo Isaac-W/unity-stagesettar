@@ -79,8 +79,8 @@ namespace StageSettAR
         /// </summary>
         public int LayersPerFrame { get; set; }
 
-        /// <summary>Most pixels the network input may have; 0 or less for no limit. Takes effect from the next detection.</summary>
-        public int MaxInputPixels { get; set; }
+        /// <summary>Scale of the whole image relative to the map's trained focal length (1 is the trained scale). Takes effect from the next detection.</summary>
+        public float InputScale { get; set; } = 1f;
 
         /// <summary>Prepares a detector for <paramref name="map"/>. GPUCompute is right for Quest and desktop GPUs.</summary>
         /// <remarks>The network itself is built on first use (warm-up or the first frame), once the input size is known.</remarks>
@@ -208,10 +208,16 @@ namespace StageSettAR
             FreeNetwork();
             // Assigned only once everything is built, so a throw cannot leave a half-built network that looks current.
             var worker = new Worker(BuildModel(_map, w, h), _backend);
-            var input = new Tensor<float>(new TensorShape(1, 3, h, w));
-            var rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear)
-            { filterMode = FilterMode.Point, hideFlags = HideFlags.HideAndDontSave };
-            rt.Create();
+            Tensor<float> input;
+            RenderTexture rt;
+            try
+            {
+                input = new Tensor<float>(new TensorShape(1, 3, h, w));
+                rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear)
+                { filterMode = FilterMode.Point, hideFlags = HideFlags.HideAndDontSave };
+                rt.Create();
+            }
+            catch { worker.Dispose(); throw; }
             _worker = worker; _input = input; _rt = rt;
             _packed = new float[(w / _map.cellSize) * (h / _map.cellSize) + 3 * _n];
             _w = w; _h = h; _stale = false;
@@ -312,12 +318,12 @@ namespace StageSettAR
         /// <summary>
         /// Network input size and intrinsics through turn, scale and crop. <paramref name="k"/> must already be at srcW x srcH.
         /// Rotating the camera q clockwise turns gives K' = (fy, fx, h - cy, cx) and swaps the size
-        /// (conventions.ts rotateCamera); then one scale s = focal / fx'. The network input is the largest multiple-of-16
-        /// size inside the scaled frame (and inside <paramref name="maxPixels"/>, keeping the aspect), cropped about the
-        /// image centre (not the principal point): fx'' = fx' s, cx'' = (cx' - x0) s.
+        /// (conventions.ts rotateCamera); then one scale s = inputScale * focal / fx'. The network input is the largest
+        /// multiple-of-16 size inside the scaled frame, cropped about the image centre (not the principal point), which
+        /// trims under 16 pixels per axis: fx'' = fx' s, cx'' = (cx' - x0) s.
         /// </summary>
-        /// <param name="maxPixels">Most pixels the network input may have; 0 or less for no limit.</param>
-        public static PreprocessGeometry Geometry(CameraIntrinsics k, int srcW, int srcH, int q, float mapFocal, int maxPixels = 0)
+        /// <param name="inputScale">Shrinks the whole image relative to the map's trained focal length; 1 keeps it.</param>
+        public static PreprocessGeometry Geometry(CameraIntrinsics k, int srcW, int srcH, int q, float mapFocal, float inputScale = 1f)
         {
             float fx = k.fx, fy = k.fy, cx = k.cx, cy = k.cy, rw = srcW, rh = srcH;
             for (int i = 0; i < q; i++)
@@ -326,15 +332,9 @@ namespace StageSettAR
                 (rw, rh) = (rh, rw);
             }
 
-            float s = mapFocal / fx;
+            float s = inputScale * mapFocal / fx;
             float sw = rw * s, sh = rh * s;
             int outW = FloorToMultiple(sw), outH = FloorToMultiple(sh);
-            if (maxPixels > 0 && (long)outW * outH > maxPixels)
-            {
-                float t = Mathf.Sqrt(maxPixels / (sw * sh));
-                outW = FloorToMultiple(sw * t);
-                outH = FloorToMultiple(sh * t);
-            }
             float cw = outW / s, ch = outH / s, x0 = (rw - cw) * 0.5f, y0 = (rh - ch) * 0.5f;
             return new PreprocessGeometry
             {
@@ -369,7 +369,7 @@ namespace StageSettAR
             int q = ChooseQuarterTurns(_map, frame.cameraPose, frame.hasPose, _prevQuarter, srcW < srcH);
             _prevQuarter = q;
 
-            var g = Geometry(k, srcW, srcH, q, _map.focal, MaxInputPixels);
+            var g = Geometry(k, srcW, srcH, q, _map.focal, InputScale);
             int outW = g.outW, outH = g.outH;
             EnsureSize(outW, outH);
 
