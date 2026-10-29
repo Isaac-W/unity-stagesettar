@@ -103,6 +103,7 @@ namespace StageSettAR.Editor
             EditorGUILayout.BeginVertical();
             EditorGUILayout.LabelField(step.Title, EditorStyles.boldLabel);
             EditorGUILayout.LabelField(detail, EditorStyles.wordWrappedMiniLabel);
+            if (step is ISetupStepOptions options) options.DrawOptions();
             EditorGUILayout.EndVertical();
             using (new EditorGUI.DisabledScope(status != SetupStatus.Needed))
                 if (GUILayout.Button(step.ActionLabel, GUILayout.Width(90), GUILayout.Height(24)))

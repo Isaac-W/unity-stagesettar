@@ -6,9 +6,11 @@ The **map root** moves, never the XR Origin or the camera. Headset tracking stay
 
 ## Install
 
-1. Create the project from the Unity Hub **Mixed Reality** template (Unity 6000.3, URP).
+1. Create the project from the Unity Hub **Mixed Reality** template (Unity 6000.3, URP). This is recommended: it already contains the XR packages the rig needs.
 2. Package Manager ▸ **Add package from disk…** ▸ `package.json` of this folder (a git URL or tarball also works).
 3. The **StageSettAR Setup** window opens (reopen it any time from **Tools ▸ StageSettAR ▸ Setup…**). Click each enabled button, top to bottom. Unity recompiles after the package install; new steps then appear on their own.
+   - The first step, **XR packages**, checks for `com.unity.xr.arfoundation` (6.x), `com.unity.xr.openxr` and `com.unity.xr.meta-openxr` (2.4 or newer) and installs whatever is missing from the Unity registry, letting Unity pick the version verified for your editor. With the Mixed Reality template it shows as done straight away and downloads nothing. Without the template it needs an internet connection.
+   - Phones: the same step has two optional buttons, **Add ARCore (Android phones)** and **Add ARKit (iOS)**. They never block the step; press them only if you build for phones.
 4. **Tools ▸ StageSettAR ▸ Import STAR Map…**, then press Play: the headset looks for the room (see Localizing) and the map appears once it is found.
 
 ### What the setup creates

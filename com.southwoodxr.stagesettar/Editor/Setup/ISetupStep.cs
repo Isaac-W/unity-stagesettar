@@ -34,4 +34,10 @@ namespace StageSettAR.Editor
         /// <summary>Performs the step. Called only when <see cref="GetStatus"/> returned <see cref="SetupStatus.Needed"/>.</summary>
         void Run();
     }
+
+    /// <summary>A step can also draw extra controls (such as optional buttons) under its description in the Setup window.</summary>
+    public interface ISetupStepOptions
+    {
+        void DrawOptions();
+    }
 }
