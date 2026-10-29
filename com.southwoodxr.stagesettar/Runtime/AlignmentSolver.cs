@@ -22,16 +22,14 @@ namespace StageSettAR
     }
 
     /// <summary>
-    /// Map-to-tracking transform p_trk = scale · Ry(yaw) · p_map + translation. Only yaw is free
-    /// because the tracking space and the map both have gravity along -y. The scale is not fitted
-    /// per alignment: the localizer places the map at scale 1.
+    /// Map-to-tracking transform p_trk = Ry(yaw) · p_map + translation. Only yaw is free
+    /// because the tracking space and the map both have gravity along -y. The map is always at scale 1.
     /// </summary>
     public struct Alignment
     {
         public bool valid;
         public float yawDeg;
         public Vector3 translation;
-        public float scale;
         /// <summary>Standard deviation (m) of where the observed landmarks' centroid lands in tracking space.</summary>
         public float positionSigma;
         public float yawSigmaDeg;
@@ -39,9 +37,9 @@ namespace StageSettAR
         public int correspondences;
         public double rmsPx;
 
-        public static Alignment Identity => new Alignment { valid = true, scale = 1f };
+        public static Alignment Identity => new Alignment { valid = true };
 
-        public Matrix4x4 MapToTracking => Matrix4x4.TRS(translation, Quaternion.Euler(0f, yawDeg, 0f), Vector3.one * scale);
+        public Matrix4x4 MapToTracking => Matrix4x4.TRS(translation, Quaternion.Euler(0f, yawDeg, 0f), Vector3.one);
     }
 
     /// <summary>
@@ -49,7 +47,7 @@ namespace StageSettAR
     /// </summary>
     /// <remarks>
     /// The headset's own tracking is smooth but drifts; a STAR fix is absolute but noisy. Fitting
-    /// one (yaw, translation) at a given scale (<see cref="SetScale"/>, 1 by default) to the reprojection error of
+    /// one (yaw, translation) to the reprojection error of
     /// all recent frames, each seen from where tracking says the camera was, averages the noise down
     /// without trusting tracking over long times. Working in image space weights each landmark by what
     /// the network actually measured. Not thread-safe.
@@ -77,7 +75,6 @@ namespace StageSettAR
         readonly double[] H = new double[NP * NP], Hd = new double[NP * NP], g = new double[NP], rhs = new double[NP], step = new double[NP];
         readonly double[] cov = new double[NP * NP], ja = new double[NP], jb = new double[NP];
         readonly double[] cur = new double[NP], cand = new double[NP];
-        double scale = 1;
         int usedCount; double usedSsq; Vector3d usedSum;
 
         public AlignmentSolver(AlignmentSettings settings, StarMap map) : this(settings, map.LandmarksUnity) { }
@@ -93,13 +90,6 @@ namespace StageSettAR
         public int FrameCount => count;
 
         public void Clear() { head = 0; count = 0; }
-
-        /// <summary>The map scale (tracking metres per map unit) that <see cref="Solve"/> holds fixed. Default 1.</summary>
-        public void SetScale(double value)
-        {
-            if (!(value > 0) || double.IsInfinity(value)) throw new ArgumentOutOfRangeException(nameof(value), "The scale must be positive and finite.");
-            scale = value;
-        }
 
         /// <summary>
         /// Stores one accepted localization: the correspondences flagged in <paramref name="inlierMask"/>
@@ -146,8 +136,7 @@ namespace StageSettAR
         /// <summary>
         /// Robust fit over the stored frames, started from <paramref name="initial"/> (which must be
         /// valid, e.g. from <see cref="FromSingleFix"/>; a bad start can land in a wrong yaw).
-        /// Yaw and translation are fitted with the scale held at <see cref="SetScale"/> (the scale in
-        /// <paramref name="initial"/> is ignored). Huber LM, then once more on the correspondences
+        /// Yaw and translation are fitted at scale 1. Huber LM, then once more on the correspondences
         /// within the inlier gate.
         /// </summary>
         public Alignment Solve(Alignment initial)
@@ -170,12 +159,12 @@ namespace StageSettAR
             if (Invert())
             {
                 // Centroid of the observed landmarks in tracking space: its Jacobian wrt (yaw, t).
-                double c = Math.Cos(cur[0]), sn = Math.Sin(cur[0]), sc = scale;
+                double c = Math.Cos(cur[0]), sn = Math.Sin(cur[0]);
                 Vector3d mc = (1.0 / usedCount) * usedSum;
                 double trace = 0;
                 for (int a = 0; a < NP; a++)
                     for (int b = 0; b < NP; b++)
-                        trace += cov[a * NP + b] * Vector3d.Dot(Col(a, mc, c, sn, sc), Col(b, mc, c, sn, sc));
+                        trace += cov[a * NP + b] * Vector3d.Dot(Col(a, mc, c, sn), Col(b, mc, c, sn));
                 yawSigma = Math.Sqrt(s2 * Math.Max(0, cov[0])) * 180 / Math.PI;
                 posSigma = Math.Sqrt(s2 * Math.Max(0, trace));
             }
@@ -184,7 +173,6 @@ namespace StageSettAR
             result.valid = true;
             result.yawDeg = (float)(yaw - 360 * Math.Floor((yaw + 180) / 360));
             result.translation = new Vector3((float)cur[1], (float)cur[2], (float)cur[3]);
-            result.scale = (float)scale;
             result.positionSigma = (float)posSigma;
             result.yawSigmaDeg = (float)yawSigma;
             result.correspondences = usedCount;
@@ -196,20 +184,19 @@ namespace StageSettAR
         /// The alignment implied by one PnP pose, T = cameraInTracking · cameraInMap^-1 reduced to
         /// yaw only. The rotation is the closest rotation about +y; the translation is then
         /// recomputed so the camera centre maps exactly onto its tracked position (keeping the
-        /// full fit's translation would move it by tilt × lever arm). The map is taken to be
-        /// <paramref name="scale"/> tracking metres per map unit.
+        /// full fit's translation would move it by tilt × lever arm).
         /// </summary>
-        public static Alignment FromSingleFix(Pose cameraInMap, Pose cameraInTracking, float scale = 1f)
+        public static Alignment FromSingleFix(Pose cameraInMap, Pose cameraInTracking)
         {
             Matrix3x3d r = Matrix3x3d.FromQuaternion(cameraInTracking.rotation) * Matrix3x3d.FromQuaternion(cameraInMap.rotation).Transpose();
             double yaw = Math.Atan2(r.m02 - r.m20, r.m00 + r.m22);
-            Vector3d t = new Vector3d(cameraInTracking.position) - scale * (Matrix3x3d.RotationY(yaw) * new Vector3d(cameraInMap.position));
-            return new Alignment { valid = true, yawDeg = (float)(yaw * 180 / Math.PI), translation = t.ToVector3(), scale = scale, frames = 1 };
+            Vector3d t = new Vector3d(cameraInTracking.position) - Matrix3x3d.RotationY(yaw) * new Vector3d(cameraInMap.position);
+            return new Alignment { valid = true, yawDeg = (float)(yaw * 180 / Math.PI), translation = t.ToVector3(), frames = 1 };
         }
 
         // ---- the fit ----
 
-        // Levenberg-Marquardt on cur (yaw rad, tx, ty, tz) at the fixed scale, residuals gated at `gate` px.
+        // Levenberg-Marquardt on cur (yaw rad, tx, ty, tz) residuals gated at `gate` px.
         void Optimize(double gate)
         {
             double cost = Evaluate(cur, gate, s.huberPx, true), lam = 1e-3;
@@ -244,7 +231,7 @@ namespace StageSettAR
         // Cost (truncated Huber) at p; with jac, also fills H, g and the used-count statistics.
         double Evaluate(double[] p, double gate, double huber, bool jac)
         {
-            double c = Math.Cos(p[0]), sn = Math.Sin(p[0]), sc = scale;
+            double c = Math.Cos(p[0]), sn = Math.Sin(p[0]);
             double cap = Math.Min(gate, 1e4), capCost = 2 * Rho(cap, huber);
             double cost = 0;
             usedCount = 0; usedSsq = 0; usedSum = default;
@@ -257,7 +244,7 @@ namespace StageSettAR
                 {
                     Vector3d m = f.map[k];
                     var rm = new Vector3d(c * m.x + sn * m.z, m.y, -sn * m.x + c * m.z);
-                    Vector3d pn = f.toNet * (sc * rm + new Vector3d(p[1], p[2], p[3]) - f.cam);
+                    Vector3d pn = f.toNet * (rm + new Vector3d(p[1], p[2], p[3]) - f.cam);
                     if (!(pn.z > 1e-6)) { cost += capCost; continue; }
                     double rx = f.fx * pn.x / pn.z + f.cx - f.u[k], ry = f.fy * pn.y / pn.z + f.cy - f.v[k];
                     double e2 = rx * rx + ry * ry;
@@ -269,7 +256,7 @@ namespace StageSettAR
                     // d p_trk / d(yaw, t), then through toNet and the projection.
                     for (int a = 0; a < NP; a++)
                     {
-                        Vector3d dn = f.toNet * Col(a, m, c, sn, sc);
+                        Vector3d dn = f.toNet * Col(a, m, c, sn);
                         ja[a] = f.fx * (dn.x - pn.x / pn.z * dn.z) / pn.z;
                         jb[a] = f.fy * (dn.y - pn.y / pn.z * dn.z) / pn.z;
                     }
@@ -297,11 +284,11 @@ namespace StageSettAR
         }
 
         // Column a of the d(p_trk)/d(yaw, t) Jacobian for a map point m.
-        static Vector3d Col(int a, Vector3d m, double c, double sn, double sc)
+        static Vector3d Col(int a, Vector3d m, double c, double sn)
         {
             switch (a)
             {
-                case 0: return new Vector3d(sc * (-sn * m.x + c * m.z), 0, sc * (-c * m.x - sn * m.z));
+                case 0: return new Vector3d(-sn * m.x + c * m.z, 0, -c * m.x - sn * m.z);
                 case 1: return new Vector3d(1, 0, 0);
                 case 2: return new Vector3d(0, 1, 0);
                 default: return new Vector3d(0, 0, 1);

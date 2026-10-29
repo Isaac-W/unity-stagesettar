@@ -173,30 +173,18 @@ namespace StageSettAR.Tests
         }
 
         [Test]
-        public void ACheckEndsOnceEnoughFixesAgreeWithThePlacement()
+        public void EachCheckIsCountedAndEndsOnRequest()
         {
             var s = Settings();
             var sch = InLate(s);
+            Assert.AreEqual(0, sch.Checks);
             sch.WantsFrames(30, Vector3.zero, 0f, s);
-            sch.CheckedFix(true, 3);
-            sch.CheckedFix(true, 3);
-            Assert.IsTrue(sch.Checking);
-            sch.CheckedFix(true, 3);
+            Assert.AreEqual(1, sch.Checks);
+            sch.EndCheck();
             Assert.IsFalse(sch.Checking);
             Assert.IsFalse(sch.WantsFrames(31, Vector3.zero, 0f, s));
-        }
-
-        [Test]
-        public void ADeviatingFixRestartsTheAgreementCount()
-        {
-            var s = Settings();
-            var sch = InLate(s);
-            sch.WantsFrames(30, Vector3.zero, 0f, s);
-            sch.CheckedFix(true, 3);
-            sch.CheckedFix(true, 3);
-            sch.CheckedFix(false, 3);
-            sch.CheckedFix(true, 3);
-            Assert.IsTrue(sch.Checking);
+            Assert.IsTrue(sch.WantsFrames(61, Vector3.zero, 0f, s));
+            Assert.AreEqual(2, sch.Checks);
         }
 
         // ---- tracking ----
@@ -235,20 +223,34 @@ namespace StageSettAR.Tests
                 sch.UpdateTracking(false, false);
                 Assert.AreEqual(LocalizerSchedule.TrackingChange.Resumed, sch.UpdateTracking(true, true));
                 Assert.AreEqual(phase, sch.Phase, "Early carries on, Late carries on");
-                Assert.IsTrue(phase == Phase.Early ? sch.WantsFrames(1, Vector3.zero, 0f, s) : !sch.Checking);
+                Assert.IsTrue(sch.WantsFrames(1, Vector3.zero, 0f, s), "Early looks at once, Late starts a check at once");
+                Assert.IsTrue(sch.ShouldInfer(1));
             }
         }
 
         [Test]
-        public void ResumingCountsTheLateTriggersFromNow()
+        public void ResumingChecksAtOnceAndThenCountsTheLateTriggersFromNow()
         {
             var s = Settings();
             var sch = InLate(s);
             sch.UpdateTracking(false, false);
             sch.UpdateTracking(true, true);
-            Assert.IsFalse(sch.WantsFrames(500, new Vector3(40f, 0f, 0f), 0f, s), "the place where the headset was put on again is the reference");
-            Assert.IsFalse(Run(sch, 500.1, 529.9, s, new Vector3(40f, 0f, 0f)));
-            Assert.IsTrue(sch.WantsFrames(530, new Vector3(40f, 0f, 0f), 0f, s));
+            var there = new Vector3(40f, 0f, 0f);
+            Assert.IsTrue(sch.WantsFrames(500, there, 0f, s), "a changed space is caught by a check");
+            Assert.IsFalse(sch.WantsFrames(503.5, there, 0f, s), "the check times out");
+            Assert.IsFalse(Run(sch, 503.6, 532.9, s, there), "the place where the headset was put on again is the reference");
+            Assert.IsTrue(sch.WantsFrames(534, there, 0f, s));
+        }
+
+        [Test]
+        public void TrackingComingBackForgetsTheJumpBaseline()
+        {
+            var sch = new LocalizerSchedule();
+            sch.TrackJump(Vector3.zero, 1.5f, 1.0);
+            sch.UpdateTracking(false, false);
+            sch.UpdateTracking(true, true);
+            Assert.IsFalse(sch.TrackJump(new Vector3(30f, 0f, 0f), 1.5f, 50.0), "carrying the headset is not a jump");
+            Assert.IsTrue(sch.TrackJump(new Vector3(40f, 0f, 0f), 1.5f, 50.1));
         }
 
         // ---- tracking jump ----
@@ -320,13 +322,14 @@ namespace StageSettAR.Tests
             sch.TrackJump(Vector3.zero, 1.5f, 1.0);
             sch.TrackJump(new Vector3(5f, 0f, 0f), 1.5f, 2.0);
             sch.TrackJump(new Vector3(-5f, 0f, 0f), 1.5f, 3.0);
-            Assert.IsTrue(sch.PredatesJump(2.5));
+            Assert.IsTrue(sch.PredatesJump(1.9), "before the earlier sample of the second jump");
+            Assert.IsFalse(sch.PredatesJump(2.5));
         }
 
         // ---- agreement and deviation ----
 
         static Alignment At(float x, float yawDeg, float sigma = 0f) =>
-            new Alignment { valid = true, scale = 1f, translation = new Vector3(x, 0f, 0f), yawDeg = yawDeg, positionSigma = sigma, yawSigmaDeg = sigma };
+            new Alignment { valid = true, translation = new Vector3(x, 0f, 0f), yawDeg = yawDeg, positionSigma = sigma, yawSigmaDeg = sigma };
 
         static readonly Vector3 Centroid = Vector3.zero;
 
@@ -356,24 +359,24 @@ namespace StageSettAR.Tests
         }
 
         [Test]
-        public void ALateFixInsideTheRefitLimitsLeavesThePlacementAlone()
+        public void AClusterInsideTheRefitLimitsLeavesThePlacementAlone()
         {
-            Assert.IsFalse(PlacementCheck.Beyond(At(0f, 0f), At(0.04f, 1.5f), Centroid, 0.05f, 2f));
+            Assert.IsFalse(PlacementCheck.Deviates(At(0f, 0f), At(0.04f, 1.5f), Centroid, 0.05f, 2f));
         }
 
         [Test]
-        public void ALateFixBeyondTheRefitLimitsIsADeviation()
+        public void AClusterBeyondTheRefitLimitsDeviates()
         {
-            Assert.IsTrue(PlacementCheck.Beyond(At(0f, 0f), At(0.06f, 0f), Centroid, 0.05f, 2f), "moved");
-            Assert.IsTrue(PlacementCheck.Beyond(At(0f, 0f), At(0f, 2.5f), Centroid, 0.05f, 2f), "turned");
+            Assert.IsTrue(PlacementCheck.Deviates(At(0f, 0f), At(0.06f, 0f), Centroid, 0.05f, 2f), "moved");
+            Assert.IsTrue(PlacementCheck.Deviates(At(0f, 0f), At(0f, 2.5f), Centroid, 0.05f, 2f), "turned");
         }
 
         [Test]
-        public void ADeviationMustExceedTheFixesOwnUncertainty()
+        public void ADeviationMustExceedOneSigmaOfTheFixNoise()
         {
-            Assert.IsFalse(PlacementCheck.Beyond(At(0f, 0f, 0.02f), At(0.1f, 0f, 0.02f), Centroid, 0.05f, 2f), "0.05 + 3 x 0.04 = 0.17");
-            Assert.IsTrue(PlacementCheck.Beyond(At(0f, 0f, 0.02f), At(0.2f, 0f, 0.02f), Centroid, 0.05f, 2f));
-            Assert.IsTrue(PlacementCheck.Beyond(At(0f, 0f, float.PositiveInfinity), At(0.06f, 0f, float.PositiveInfinity), Centroid, 0.05f, 2f), "unknown does not widen the limits");
+            Assert.IsFalse(PlacementCheck.Deviates(At(0f, 0f), At(0.06f, 0f, 0.02f), Centroid, 0.05f, 2f), "0.05 + 0.02 = 0.07");
+            Assert.IsTrue(PlacementCheck.Deviates(At(0f, 0f), At(0.08f, 0f, 0.02f), Centroid, 0.05f, 2f));
+            Assert.IsTrue(PlacementCheck.Deviates(At(0f, 0f), At(0.06f, 0f, float.PositiveInfinity), Centroid, 0.05f, 2f), "unknown does not widen the limits");
         }
 
         [Test]
@@ -381,10 +384,17 @@ namespace StageSettAR.Tests
         {
             Alignment cur = At(0f, 0f), fix = At(0.5f, 10f);
             Assert.IsFalse(PlacementCheck.Beyond(cur, fix, Centroid, 0.9f, 18f), "Early refines with it");
-            Assert.IsTrue(PlacementCheck.Beyond(cur, fix, Centroid, 0.05f, 2f), "Late takes it as a deviation");
+            Assert.IsTrue(PlacementCheck.Deviates(cur, fix, Centroid, 0.05f, 2f), "Late takes it as a deviation");
         }
 
-        // ---- convergence ----
+        [Test]
+        public void TheEarlyGateWidensWithTheUncertaintyOfBothFixes()
+        {
+            Assert.IsFalse(PlacementCheck.Beyond(At(0f, 0f, 0.02f), At(0.1f, 0f, 0.02f), Centroid, 0.05f, 2f), "0.05 + 3 x 0.04 = 0.17");
+            Assert.IsTrue(PlacementCheck.Beyond(At(0f, 0f, 0.02f), At(0.2f, 0f, 0.02f), Centroid, 0.05f, 2f));
+        }
+
+        // ---- coverage ----
 
         static CoverageTracker Covered(int fixes, float turnDeg, float moveMeters)
         {
@@ -398,19 +408,19 @@ namespace StageSettAR.Tests
         }
 
         [Test]
-        public void ConvergesOnTurnWithEnoughFixes()
+        public void SettlesOnTurnWithEnoughFixes()
         {
             Assert.IsTrue(Covered(4, 30f, 0f).IsComplete(4, 30f, 0.5f));
         }
 
         [Test]
-        public void ConvergesOnTravelWithEnoughFixes()
+        public void SettlesOnTravelWithEnoughFixes()
         {
             Assert.IsTrue(Covered(4, 0f, 0.5f).IsComplete(4, 30f, 0.5f));
         }
 
         [Test]
-        public void DoesNotConvergeWithoutEnoughFixesOrCoverage()
+        public void DoesNotSettleWithoutEnoughFixesOrCoverage()
         {
             Assert.IsFalse(Covered(3, 90f, 3f).IsComplete(4, 30f, 0.5f), "too few fixes");
             Assert.IsFalse(Covered(10, 10f, 0.2f).IsComplete(4, 30f, 0.5f), "standing still");

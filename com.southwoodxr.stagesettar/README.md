@@ -106,7 +106,7 @@ The Inspector shows only the basics at first. Everything else sits in collapsed 
 | `enabled` | On (default). Off: the first confident fix places the map, with no agreement needed. |
 | `hz` | Frames analysed per second (4). |
 | `fixesToShow` | How many confident fixes (`gating.minConfidence`) must agree within `gating.agreementMeters` / `gating.agreementDegrees` before the map is placed and shown (3, minimum 1). They are fitted together; there is no turn or coverage requirement. The same wait applies after a tracking reset. Fixes that do not agree keep waiting. |
-| `failAfterSeconds` | If Startup does not finish within this time (25 s) the state becomes `Failed` and `onFailed("Not in this room…")` fires. |
+| `failAfterSeconds` | If Startup does not finish within this time (25 s; with Startup off, the first placement) the state becomes `Failed` and `onFailed("Not in this room…")` fires. |
 
 **Early** (`early`): refining right after the placement.
 
@@ -125,8 +125,8 @@ The Inspector shows only the basics at first. Everything else sits in collapsed 
 | `useInterval`, `intervalSeconds` | A check every 30 s. |
 | `useMove`, `moveMeters` | A check once the camera moved more than 2 m since the last check. |
 | `useTurn`, `turnDegrees` | A check once the head turned more than 60° since the last check. Each trigger can be switched off on its own. |
-| `hz`, `burstSeconds` | A check analyses frames at `hz` (4) for at most `burstSeconds` (3 s), and ends sooner once 3 fixes in a row agree with the placement. Nothing is inferred between checks. |
-| `refitMeters`, `refitDegrees` | The placement is only refitted when fixes that agree with each other put the map farther than this (0.05 m / 2°, plus 3 sigma of the two fixes) from it. 3 such fixes are fitted together and the map glides there; otherwise the placement is left alone. |
+| `hz`, `burstSeconds` | A check analyses frames at `hz` (4) for at most `burstSeconds` (3 s), and ends sooner once 3 fixes that agree with each other have been collected. Nothing is inferred between checks. |
+| `refitMeters`, `refitDegrees` | The placement is only refitted when at least 3 fixes that agree with each other put the map farther than this (0.05 m / 2°, plus at most 1 sigma of their own noise) from it. Those fixes are fitted together and the map glides there; otherwise the placement is left alone. Each check starts with no fixes left over from an earlier one. |
 
 **Timing** (`timing`)
 
@@ -142,7 +142,7 @@ The Inspector shows only the basics at first. Everything else sits in collapsed 
 |---|---|
 | `minConfidence` | Minimum PnP confidence (0..1) for a fix to count (0.5). |
 | `agreementMeters` / `agreementDegrees` | Two fixes agree if the map lands within this of each other (0.1 m / 3°). |
-| `trackingJumpMeters` | If the tracked camera (`CameraSource.TryGetCurrentPose`) jumps farther than this (1.5 m) from one rendered frame to the next, tracking was reset (see Lost below). A frame that was being analysed is dropped only if it was captured before the reset (`CameraFrame.timestamp` is on `Time.realtimeSinceStartupAsDouble`). A source whose `TryGetCurrentPose` returns false is checked on the poses of the frames it delivers instead. Walking never triggers it. |
+| `trackingJumpMeters` | If the tracked camera (`CameraSource.TryGetCurrentPose`) jumps farther than this (1.5 m) from one rendered frame to the next, tracking was reset (see Lost below). A frame that was being analysed is dropped only if it was captured before the reset (`CameraFrame.timestamp` is on `Time.realtimeSinceStartupAsDouble`). A source whose `TryGetCurrentPose` returns false is checked on the poses of the frames it delivers instead, and gets no Late checks from moving or turning, only from the interval. Walking never triggers it. |
 
 **Advanced** (`advanced`): `backend` (`GPUCompute`), `layersPerFrame` (10: network layers run per rendered frame, so no frame pays for the whole network; 0 runs it all at once), `inputScale` (1: 1 feeds the network the map's trained focal length; lower values, down to 0.25, shrink the whole image for speed but find fewer landmarks), `pnp` (pose solver) and `alignment` (`maxFrames` 30, `maxFrameAgeSeconds` 60, `huberPx`, `inlierPx`: the window and robust loss of the fit). **Debug** (`debug`): `fusion`: `Joint` (default) combines recent fixes with headset tracking, rejects outliers and glides the map into place; `Per Frame` places the map exactly where each single frame says, with no agreement check, gate, refit or glide, and Early never ends. It jitters and can jump to a wrong fix; use it to compare against `Joint`.
 
@@ -150,8 +150,9 @@ States: `Idle`, `Initializing` (the Startup phase before the first placement), `
 
 **Lost.** The localizer never gives up on the room because of time or missing fixes: failing to get fixes in Early or Late only means nothing is refined, and the headset's own tracking carries the map. It goes `Lost` (`onLost`) only when the device has no tracking, `CameraSource.IsTracking` is false, or when the tracked camera jumps (tracking was reset). While `Lost` nothing is inferred.
 - When tracking comes back after it was lost with the headset on, or after a jump, the old placement cannot be trusted: the map is hidden (`hideUntilLocalized`) and the localizer goes back to Startup (state `Initializing`).
-- If tracking was lost only because the headset was taken off (`CameraSource.IsWorn` false) and no jump was seen when it came back, the placement is kept and the localizer carries on in the phase it was in (Early if Early had not finished, else Late) with state `Localized` and `onLocalized`.
-- `ArFoundationCameraSource` reports tracking from `ARSession.state` (an initializing session has no tracking) and the head-mounted device's `CommonUsages.userPresence` from Unity XR. A platform without a signal, such as a phone's `userPresence`, counts as tracking. Other sources keep the default `true`; a custom `CameraSource` can override `IsTracking` and `IsWorn`.
+- If tracking was lost only because the headset was taken off or the app was paused or lost focus (`IsWorn` false), the placement is kept and the localizer carries on in the phase it was in (Early if Early had not finished, else Late) with state `Localized` and `onLocalized`.
+  The jump baseline is forgotten then, so carrying the headset away is not a jump, and a check runs at once (in Early, the next frame is taken at once), so a changed space is caught by a refit.
+- `ArFoundationCameraSource` reports tracking from `ARSession.state`: it counts as lost only after the session was seen tracking and then left that state, and a `notTrackingReason` of None, Initializing or Relocalizing counts as a brief drop, not a loss. This needs checking on Quest meta-openxr. It reports `IsWorn` false while the app is paused or unfocused (taking a Quest off moves the OpenXR session out of focus, so this needs no Meta SDK; on a phone it is the app going to the background) or while the head device's `CommonUsages.userPresence` is false. A platform without a presence signal counts as present. Other sources keep the default `true`; a custom `CameraSource` can override `IsTracking` and `IsWorn`.
 
 How fixes are used: each frame gives a camera pose in the map; combined with where the headset says the camera was, that implies a map-to-tracking alignment (yaw + translation; gravity is shared). The current alignment is also passed to PnP as a prior, and an `AlignmentSolver` refits a window of recent frames, which averages noise down without trusting drifting tracking over long times.
 

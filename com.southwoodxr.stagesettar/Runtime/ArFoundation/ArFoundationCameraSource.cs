@@ -137,6 +137,10 @@ namespace StageSettAR
         string _lensSource = "";
         bool _lensResolved, _configChecked, _loggedFirst, _loggedDiagnostics, _yuvFailed;
         bool _permitted;
+        bool _sessionTracked;                     // the session has reported SessionTracking at least once
+        bool _focused = true, _paused, _worn;
+        int _wornFrame = -1;
+        InputDevice _head;
 #if UNITY_ANDROID && !UNITY_EDITOR
         bool _requested;
 #endif
@@ -145,19 +149,45 @@ namespace StageSettAR
 
         public override Transform TrackingSpace => xrOrigin != null ? xrOrigin.transform : null;
 
-        // AR Foundation reports tracking that is missing (lost, or not found yet) as an initializing session. In any
-        // other state, such as before the session starts, there is no signal, which counts as tracking.
-        public override bool IsTracking => IsWorn && ARSession.state != ARSessionState.SessionInitializing;
+        // AR Foundation reports tracking that is missing as a session that is initializing again, but a provider may sit
+        // in that state from the start, so a loss only counts once the session was seen tracking. Of the reasons it gives
+        // while not tracking, None, Initializing and Relocalizing are brief, and a short drop must not restart the search.
+        // Needs checking on Quest meta-openxr: whether it reports SessionTracking and a useful notTrackingReason.
+        public override bool IsTracking
+        {
+            get
+            {
+                if (!IsWorn) return false;
+                ARSessionState state = ARSession.state;
+                if (state == ARSessionState.SessionTracking) _sessionTracked = true;
+                if (!_sessionTracked || state == ARSessionState.SessionTracking) return true;
+                NotTrackingReason reason = ARSession.notTrackingReason;
+                return reason == NotTrackingReason.None || reason == NotTrackingReason.Initializing || reason == NotTrackingReason.Relocalizing;
+            }
+        }
 
-        // Quest reports whether the headset is on a head; phones have no such device, so they count as worn.
+        // Not worn means the headset is off a head or the app was paused or lost focus. Taking a Quest off moves the OpenXR
+        // session out of focus (the session-state route, so no Meta SDK is needed), and on a phone the same events mean the
+        // app went to the background. Either way tracking pauses and the placement is kept. Read at most once per frame.
         public override bool IsWorn
         {
             get
             {
-                InputDevice head = InputDevices.GetDeviceAtXRNode(XRNode.Head);
-                return !head.isValid || !head.TryGetFeatureValue(CommonUsages.userPresence, out bool present) || present;
+                if (_wornFrame != Time.frameCount)
+                {
+                    _wornFrame = Time.frameCount;
+                    if (!_head.isValid) _head = InputDevices.GetDeviceAtXRNode(XRNode.Head);
+                    // Phones, and headsets without the feature, have no presence signal and count as present.
+                    bool present = !_head.isValid || !_head.TryGetFeatureValue(CommonUsages.userPresence, out bool p) || p;
+                    _worn = present && _focused && !_paused;
+                }
+                return _worn;
             }
         }
+
+        void OnApplicationPause(bool paused) => _paused = paused;
+
+        void OnApplicationFocus(bool focused) => _focused = focused;
 
         public override bool TryGetCurrentPose(out Pose pose)
         {

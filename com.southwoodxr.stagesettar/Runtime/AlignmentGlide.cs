@@ -32,7 +32,6 @@ namespace StageSettAR
             Alignment next = shown;
             next.yawDeg += Mathf.DeltaAngle(shown.yawDeg, target.yawDeg) * k;
             next.translation = Vector3.Lerp(shown.translation, target.translation, k);
-            next.scale = Mathf.Lerp(shown.scale, target.scale, k);
             return next;
         }
 

@@ -349,7 +349,6 @@ namespace StageSettAR.Tests
             var r = new System.Random(seed);
             Vector3[] map = Room(r, 200);
             var sc = new AlignScene { map = map, truth = truth, solver = new AlignmentSolver(settings, map) };
-            sc.solver.SetScale(truth.scale);   // the solver holds the scale
             Matrix4x4 T = truth.MapToTracking;
             var d = new Detections(map.Length);
             for (int f = 0; f < turns.Length; f++)
@@ -376,8 +375,8 @@ namespace StageSettAR.Tests
             return sc;
         }
 
-        static Alignment Truth(float yaw, Vector3 t, float scale = 1f) =>
-            new Alignment { valid = true, yawDeg = yaw, translation = t, scale = scale };
+        static Alignment Truth(float yaw, Vector3 t) =>
+            new Alignment { valid = true, yawDeg = yaw, translation = t };
 
         static Alignment Perturbed(Alignment a, float yaw, Vector3 t)
         {
@@ -395,7 +394,6 @@ namespace StageSettAR.Tests
             Assert.IsTrue(fit.valid);
             Assert.AreEqual(truth.yawDeg, fit.yawDeg, 0.1);
             Assert.Less((fit.translation - truth.translation).magnitude, 0.02f);
-            Assert.AreEqual(1f, fit.scale, 1e-6);
             Assert.Less(fit.rmsPx, 1.2);
             Assert.Less(fit.positionSigma, 0.05f);
             Assert.Greater(fit.positionSigma, 0f);
@@ -418,28 +416,6 @@ namespace StageSettAR.Tests
             Alignment fit = sc.solver.Solve(Perturbed(truth, -3f, new Vector3(0.2f, 0, -0.2f)));
             Assert.AreEqual(truth.yawDeg, fit.yawDeg, 0.2);
             Assert.Less((fit.translation - truth.translation).magnitude, 0.04f);
-        }
-
-        [Test]
-        public void AlignmentHoldsTheSuppliedScaleAndFitsYawAndTranslationAtIt()
-        {
-            Alignment truth = Truth(15f, new Vector3(0.4f, 0f, -1f), 1.04f);
-            AlignScene sc = MakeAlignScene(AlignmentSettings.Default, truth, 7, 0.3, new[] { 0, 1, 2, 3, 0, 1, 2, 3 });
-            Alignment start = Perturbed(truth, 2f, new Vector3(0.1f, 0f, 0.1f));
-            start.scale = 1f;   // the scale in the start is ignored
-            Alignment fit = sc.solver.Solve(start);
-            Assert.AreEqual(1.04f, fit.scale, 1e-6f);
-            Assert.AreEqual(truth.yawDeg, fit.yawDeg, 0.3);
-            Assert.Less((fit.translation - truth.translation).magnitude, 0.03f);
-
-            // A wrong scale cannot be fitted away: the solver keeps it and the translation absorbs the error.
-            sc.solver.SetScale(1.0);
-            Alignment wrong = sc.solver.Solve(start);
-            Assert.AreEqual(1f, wrong.scale, 1e-6f);
-            Assert.Greater(wrong.rmsPx, fit.rmsPx);
-
-            Assert.Throws<ArgumentOutOfRangeException>(() => sc.solver.SetScale(0));
-            Assert.Throws<ArgumentOutOfRangeException>(() => sc.solver.SetScale(double.NaN));
         }
 
         [Test]
@@ -473,11 +449,6 @@ namespace StageSettAR.Tests
             Assert.Less((b.MapToTracking.MultiplyPoint3x4(cameraInMap.position) - tilted.position).magnitude, 1e-4f);
             Assert.AreEqual(truth.yawDeg, b.yawDeg, 3.5);
             Assert.AreEqual(0f, Vector3.Dot(b.MapToTracking.MultiplyVector(Vector3.up), Vector3.right), 1e-6f);
-
-            // At a scale the camera centre still lands exactly on its tracked position, and the alignment carries the scale.
-            Alignment s = AlignmentSolver.FromSingleFix(cameraInMap, tilted, 1.04f);
-            Assert.AreEqual(1.04f, s.scale, 1e-6f);
-            Assert.Less((s.MapToTracking.MultiplyPoint3x4(cameraInMap.position) - tilted.position).magnitude, 1e-4f);
         }
     }
 }

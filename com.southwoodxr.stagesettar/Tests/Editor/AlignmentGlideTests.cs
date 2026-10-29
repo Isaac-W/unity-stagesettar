@@ -8,17 +8,16 @@ namespace StageSettAR.Tests
     {
         static GlideSettings Settings() => new GlideSettings { smooth = true, seconds = 0.5f, snapMeters = 1f, snapDegrees = 20f };
 
-        static Alignment At(float x, float yawDeg, float scale = 1f) =>
-            new Alignment { valid = true, translation = new Vector3(x, 0f, 0f), yawDeg = yawDeg, scale = scale };
+        static Alignment At(float x, float yawDeg) =>
+            new Alignment { valid = true, translation = new Vector3(x, 0f, 0f), yawDeg = yawDeg };
 
         [Test]
         public void ItIsAbout95PercentThereAfterTheGlideTime()
         {
-            Alignment a = AlignmentGlide.Step(At(0f, 0f), At(0.5f, 10f, 1.02f), Vector3.zero, 0.5f, Settings());
+            Alignment a = AlignmentGlide.Step(At(0f, 0f), At(0.5f, 10f), Vector3.zero, 0.5f, Settings());
             float left = Mathf.Exp(-3f);
             Assert.AreEqual(0.5f * (1f - left), a.translation.x, 1e-4f);
             Assert.AreEqual(10f * (1f - left), a.yawDeg, 1e-3f);
-            Assert.AreEqual(1f + 0.02f * (1f - left), a.scale, 1e-5f);
         }
 
         [Test]
@@ -39,12 +38,11 @@ namespace StageSettAR.Tests
         [Test]
         public void ItDoesNotDependOnTheFrameRate()
         {
-            Alignment from = At(0f, 0f), to = At(0.9f, 18f, 1.05f);
+            Alignment from = At(0f, 0f), to = At(0.9f, 18f);
             Alignment one = AlignmentGlide.Step(from, to, Vector3.zero, 0.2f, Settings());
             Alignment two = AlignmentGlide.Step(AlignmentGlide.Step(from, to, Vector3.zero, 0.1f, Settings()), to, Vector3.zero, 0.1f, Settings());
             Assert.AreEqual(one.translation.x, two.translation.x, 1e-5f);
             Assert.AreEqual(one.yawDeg, two.yawDeg, 1e-4f);
-            Assert.AreEqual(one.scale, two.scale, 1e-6f);
         }
 
         [Test]

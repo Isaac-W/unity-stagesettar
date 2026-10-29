@@ -42,7 +42,7 @@ namespace StageSettAR
             public float hz = 4f;
             [Tooltip("How many confident fixes must agree before the map is first shown (and again after a tracking reset). Default 3: one lucky wrong fix cannot place the map.")]
             [Range(1, 16)] public int fixesToShow = 3;
-            [Tooltip("Give up ('not in this room') if the room is not found within this many seconds of starting. Default 25: long enough to look all around once or twice.")]
+            [Tooltip("Give up ('not in this room') if the room is not found within this many seconds of starting. Also applies when Startup is off, to the first placement. Default 25: long enough to look all around once or twice.")]
             public float failAfterSeconds = 25f;
         }
 
@@ -84,9 +84,9 @@ namespace StageSettAR
             public float turnDegrees = 60f;
             [Tooltip("Camera frames analysed per second during a check. Default 4.")]
             public float hz = 4f;
-            [Tooltip("A check ends after this many seconds, sooner if enough fixes agree with the placement. Default 3: about a dozen frames at the default rate.")]
+            [Tooltip("A check ends after this many seconds, sooner once three fixes that agree with each other have been collected. Default 3: about a dozen frames at the default rate.")]
             public float burstSeconds = 3f;
-            [Tooltip("The placement is refitted only if fixes that agree with each other put the map farther than this many metres from it (plus a margin for their own uncertainty). Default 0.05: a smaller shift is not worth moving the map for.")]
+            [Tooltip("The placement is refitted only if three fixes that agree with each other put the map farther than this many metres from it (plus at most one sigma of their own noise). Default 0.05: a smaller shift is not worth moving the map for.")]
             public float refitMeters = 0.05f;
             [Tooltip("...or turned it by more than this many degrees. Default 2.")]
             public float refitDegrees = 2f;
@@ -217,7 +217,7 @@ namespace StageSettAR
         }
 
         const int MaxCandidates = 32;
-        const int ConsistentFixes = 3;           // fixes in a row that must agree to re-seed (Early) or refit (Late)
+        const int ConsistentFixes = 3;           // fixes that must agree to re-seed (Early) or to judge a Late check
         const double CandidateSeconds = 10.0;    // fixes that are to agree must all be this recent
         const double FrameGapSeconds = 2.0;      // frames farther apart than this are not compared for a tracking jump
 
@@ -243,6 +243,7 @@ namespace StageSettAR
         int _rejects, _initFixes;
         Alignment _lastReject;
         bool _everLocalized;
+        int _checkNumber;   // the Late check the candidates belong to
 
         Transform Root => mapRoot ? mapRoot : transform;
 
@@ -372,6 +373,14 @@ namespace StageSettAR
                     double now = Time.realtimeSinceStartupAsDouble;
 
                     if (State == LocalizerState.Failed || State == LocalizerState.Idle) return;
+                    // Checked before any frame is skipped, so stale or missing frames cannot delay giving up.
+                    if (State == LocalizerState.Initializing && _initStart >= 0 && !_schedule.TrackingLost && now - _initStart > startup.failAfterSeconds)
+                    {
+                        Fail(_initFixes == 0
+                            ? "Not in this room: no known landmarks were recognised."
+                            : "Not in this room: the landmark fixes never agreed.");
+                        return;
+                    }
                     ScheduleSettings sched = ScheduleNow;
                     if (!_schedule.WantsFrames(now, _headPos, _headHeading, sched)) continue;
                     if (!_schedule.ShouldInfer(now) || _detector.Busy || !cameraSource.IsReady) continue;
@@ -395,11 +404,6 @@ namespace StageSettAR
                     if (IsStale(epoch, frame)) continue;
                     await ProcessFrame(work, frame, d, epoch, ct);
                     ct.ThrowIfCancellationRequested();
-
-                    if (State == LocalizerState.Initializing && now - _initStart > startup.failAfterSeconds)
-                        Fail(_initFixes == 0
-                            ? "Not in this room: no known landmarks were recognised."
-                            : "Not in this room: the landmark fixes never agreed.");
                 }
             }
             catch (OperationCanceledException) { }
@@ -483,16 +487,16 @@ namespace StageSettAR
             AddCoverage(frame.cameraPose);
         }
 
-        // Late: a fix that agrees with the placement leaves it alone. Fixes that disagree are collected, and only when
-        // enough of them agree with each other is the map taken to have moved and refitted from them.
+        // Late: the fixes of a check are collected. Once enough of them agree with each other the check is over, and the
+        // placement is refitted from them only if they put the map somewhere else than where it is.
         void CheckPlacement(PnpWork w, CameraFrame frame, Detections d, Alignment a, double now)
         {
-            bool deviates = PlacementCheck.Beyond(_current, a, _centroid, late.refitMeters, late.refitDegrees);
-            _schedule.CheckedFix(!deviates, ConsistentFixes);
-            if (!deviates) { _cands.Clear(); return; }
+            if (!_schedule.Checking) return;
+            if (_checkNumber != _schedule.Checks) { _checkNumber = _schedule.Checks; _cands.Clear(); }
             AddCandidate(w, frame, d, a, now);
             if (!TryConsensus(out Alignment seed)) return;
-            PlaceFromCluster(seed);
+            if (PlacementCheck.Deviates(_current, seed, _centroid, late.refitMeters, late.refitDegrees)) PlaceFromCluster(seed);
+            _cands.Clear();
             _schedule.EndCheck();
         }
 
@@ -627,10 +631,11 @@ namespace StageSettAR
             return best;
         }
 
-        static float Heading(Pose p) => Heading(p.rotation * Vector3.forward);
-
-        static float Heading(Vector3 f)
+        // Yaw of where the camera looks. Looking straight up or down has no yaw, so the previous heading is kept.
+        float Heading(Pose p)
         {
+            Vector3 f = p.rotation * Vector3.forward;
+            if (f.x * f.x + f.z * f.z < 1e-6f) return _headHeading;
             return Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
         }
 
@@ -669,7 +674,8 @@ namespace StageSettAR
         // The device's own tracking is the only thing that loses the room: missing fixes just mean nothing gets refined.
         void UpdateTracking()
         {
-            switch (_schedule.UpdateTracking(cameraSource.IsTracking, cameraSource.IsWorn))
+            bool worn = cameraSource.IsWorn;
+            switch (_schedule.UpdateTracking(worn && cameraSource.IsTracking, worn))
             {
                 case LocalizerSchedule.TrackingChange.Lost:
                     LoseTracking();

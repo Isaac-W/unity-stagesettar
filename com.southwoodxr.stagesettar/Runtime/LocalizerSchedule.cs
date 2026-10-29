@@ -40,10 +40,9 @@ namespace StageSettAR
 
         double _nextInfer, _nextCheck, _checkEnd;
         double _lastPosTime, _jumpTime = double.NegativeInfinity;
-        bool _checking, _needsReference, _hasPos, _trackingLost, _resetNeeded;
+        bool _checking, _checkNow, _needsReference, _hasPos, _trackingLost, _resetNeeded;
         Vector3 _lastPos, _refPos;
         float _refHeading;
-        int _confirms;
 
         public StarLocalizer.Phase Phase { get; private set; }
 
@@ -52,6 +51,9 @@ namespace StageSettAR
 
         /// <summary>True while a Late check is running.</summary>
         public bool Checking => _checking;
+
+        /// <summary>How many Late checks have started so far, so the localizer can tell a new check from the one it was in.</summary>
+        public int Checks { get; private set; }
 
         /// <summary>The phase after the map was placed: Early, or Late when Early is off.</summary>
         public static StarLocalizer.Phase AfterPlacement(in ScheduleSettings s) =>
@@ -74,7 +76,7 @@ namespace StageSettAR
         public void Enter(StarLocalizer.Phase phase)
         {
             Phase = phase;
-            _checking = false;
+            _checking = _checkNow = false;
             _needsReference = true;
         }
 
@@ -82,7 +84,9 @@ namespace StageSettAR
         /// Call every frame with what the camera source says. Tracking going away is reported once. When it comes back,
         /// the placement is only kept if the headset was simply taken off: tracking that went away while the headset was
         /// on may have been reset, and then the map would be in the wrong place. A reset that goes unnoticed here is
-        /// still caught by <see cref="TrackJump"/>.
+        /// still caught by <see cref="TrackJump"/>. Tracking coming back also forgets the jump baseline, because the
+        /// headset may have been carried anywhere meanwhile. A kept placement is checked at once, so a changed space is
+        /// caught by a refit: Late starts a check right away and Early takes its next frame without waiting.
         /// </summary>
         public TrackingChange UpdateTracking(bool tracking, bool worn)
         {
@@ -95,8 +99,11 @@ namespace StageSettAR
             if (tracking && _trackingLost)
             {
                 _trackingLost = false;
+                ForgetPosition();
                 if (_resetNeeded) { _resetNeeded = false; return TrackingChange.RestartNeeded; }
                 Resume();
+                _nextInfer = 0.0;
+                _checkNow = true;
                 return TrackingChange.Resumed;
             }
             return TrackingChange.None;
@@ -107,16 +114,6 @@ namespace StageSettAR
         {
             _checking = false;
             _needsReference = true;
-        }
-
-        /// <summary>
-        /// Late: a confident fix was compared with the placement. The check ends once <paramref name="needed"/> fixes in a
-        /// row agreed with it, because there is nothing left to find out.
-        /// </summary>
-        public void CheckedFix(bool agrees, int needed)
-        {
-            _confirms = agrees ? _confirms + 1 : 0;
-            if (_confirms >= needed) EndCheck();
         }
 
         /// <summary>
@@ -135,6 +132,9 @@ namespace StageSettAR
             _hasPos = true;
             return jump;
         }
+
+        /// <summary>Drops the previous sample, so the next one is not compared with a position from before the camera was carried away.</summary>
+        public void ForgetPosition() => _hasPos = false;
 
         /// <summary>True for a frame captured before the last tracking reset: its pose belongs to the old tracking space.</summary>
         public bool PredatesJump(double captureTime) => captureTime < _jumpTime;
@@ -176,11 +176,12 @@ namespace StageSettAR
                 _refPos = pos;
                 _refHeading = heading;
             }
-            if (!_checking && CheckDue(now, pos, heading, s))
+            if (!_checking && (_checkNow || CheckDue(now, pos, heading, s)))
             {
                 _checking = true;
+                _checkNow = false;
                 _checkEnd = now + s.lateBurstSeconds;
-                _confirms = 0;
+                Checks++;
             }
             return _checking;
         }
@@ -213,14 +214,24 @@ namespace StageSettAR
 
         /// <summary>
         /// True when <paramref name="fix"/> puts the map farther from <paramref name="current"/> than the limits plus a margin
-        /// for the uncertainty of both. This is the Early gate (a fix beyond it is rejected) and the Late deviation test
-        /// (a fix beyond it is evidence that the map has moved). Nothing is refitted for a fix inside the limits.
+        /// for the uncertainty of both. This is the Early gate: a fix beyond it is rejected.
         /// </summary>
         public static bool Beyond(in Alignment current, in Alignment fix, Vector3 centroid, float meters, float degrees)
         {
             Difference(current, fix, centroid, out float m, out float deg);
             return m > meters + 3f * (Known(current.positionSigma) + Known(fix.positionSigma))
                 || deg > degrees + 3f * (Known(current.yawSigmaDeg) + Known(fix.yawSigmaDeg));
+        }
+
+        /// <summary>
+        /// The Late test: true when <paramref name="fix"/> (the middle of fixes that agree with each other) puts the map
+        /// farther from <paramref name="current"/> than the limits plus one sigma of its own noise. Anything smaller is not
+        /// worth moving the map for.
+        /// </summary>
+        public static bool Deviates(in Alignment current, in Alignment fix, Vector3 centroid, float meters, float degrees)
+        {
+            Difference(current, fix, centroid, out float m, out float deg);
+            return m > meters + Known(fix.positionSigma) || deg > degrees + Known(fix.yawSigmaDeg);
         }
 
         // A solve whose covariance could not be inverted reports an infinite sigma. Unknown must not widen the limits
