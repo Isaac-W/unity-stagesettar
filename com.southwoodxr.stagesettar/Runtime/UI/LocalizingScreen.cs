@@ -7,7 +7,8 @@ namespace StageSettAR
 {
     /// <summary>
     /// A small panel that tells the user what the STAR Localizer is doing: looking for the room, found it,
-    /// lost it, or gave up.
+    /// lost it, or gave up. With the Adaptive mode the panel goes away as soon as the map is first placed, since the
+    /// search is short and the later refinement needs no message.
     /// </summary>
     /// <remarks>
     /// The panel floats a little below eye level and follows the user's view softly (it uses
@@ -121,7 +122,7 @@ namespace StageSettAR
                     break;
                 case LocalizerState.Localized:
                     label.text = foundText;
-                    _holdUntil = firstSight ? 0f : Time.unscaledTime + foundSeconds;
+                    _holdUntil = firstSight || localizer.mode == Mode.Adaptive ? 0f : Time.unscaledTime + foundSeconds;
                     break;
             }
             if (state != LocalizerState.Initializing && state != LocalizerState.Lost) _fill = 0f;
@@ -142,8 +143,10 @@ namespace StageSettAR
         void UpdateBar(LocalizerState state)
         {
             bool searching = state == LocalizerState.Initializing || state == LocalizerState.Lost;
-            if (bar != null && bar.activeSelf != searching) bar.SetActive(searching);
-            if (!searching || barFill == null) return;
+            // Adaptive finds the room at the first fix, so there is no progress to show.
+            bool showBar = searching && localizer.mode != Mode.Adaptive;
+            if (bar != null && bar.activeSelf != showBar) bar.SetActive(showBar);
+            if (!showBar || barFill == null) return;
             // Eased, because the real progress moves in steps as each fix arrives.
             _fill = Mathf.MoveTowards(_fill, localizer.SearchProgress, Time.unscaledDeltaTime * 1.5f);
             barFill.anchorMax = new Vector2(_fill, 1f);

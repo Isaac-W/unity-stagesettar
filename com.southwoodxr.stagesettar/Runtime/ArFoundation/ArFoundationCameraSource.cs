@@ -145,6 +145,16 @@ namespace StageSettAR
 
         public override Transform TrackingSpace => xrOrigin != null ? xrOrigin.transform : null;
 
+        public override bool TryGetCurrentPose(out Pose pose)
+        {
+            pose = Pose.identity;
+            if (_ringCount == 0) return false;
+            if (!_lensResolved) ResolveLens();
+            ref var newest = ref _ring[(_ringHead - 1 + RingSize) % RingSize];
+            pose = ToSensorPose(new Pose(newest.position, newest.rotation));
+            return true;
+        }
+
         // Images are only acquired and uploaded when asked for (the localizer wants a few per second, the camera
         // delivers many more). A miss records the request and the next Update serves it.
         public override bool TryGetFrame(long afterId, out CameraFrame frame)

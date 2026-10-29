@@ -59,6 +59,17 @@ namespace StageSettAR
             _webcam = null;
         }
 
+        public override bool TryGetCurrentPose(out Pose pose)
+        {
+            pose = Pose.identity;
+            if (cameraTransform == null) return false;
+            Transform t = cameraTransform;
+            pose = trackingSpace == null
+                ? new Pose(t.position, t.rotation)
+                : new Pose(trackingSpace.InverseTransformPoint(t.position), Quaternion.Inverse(trackingSpace.rotation) * t.rotation);
+            return true;
+        }
+
         public override bool TryGetFrame(long afterId, out CameraFrame frame)
         {
             frame = default;

@@ -66,6 +66,12 @@ namespace StageSettAR
             _order = null;
         }
 
+        public override bool TryGetCurrentPose(out Pose pose)
+        {
+            pose = _groundTruth;
+            return _currentIndex >= 0;
+        }
+
         public override bool TryGetFrame(long afterId, out CameraFrame frame)
         {
             frame = default;

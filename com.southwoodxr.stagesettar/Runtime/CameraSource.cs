@@ -206,6 +206,17 @@ namespace StageSettAR
             return best;
         }
 
+        /// <summary>
+        /// The camera's current tracked pose, relative to <see cref="TrackingSpace"/> and in the same convention as
+        /// <see cref="CameraFrame.cameraPose"/>. Cheap and available every frame, without acquiring an image, so the
+        /// localizer can watch for tracking resets and movement while it is resting. False (the default) when unknown.
+        /// </summary>
+        public virtual bool TryGetCurrentPose(out Pose pose)
+        {
+            pose = Pose.identity;
+            return false;
+        }
+
         /// <summary>Fetch the newest frame with an id greater than <paramref name="afterId"/>.</summary>
         /// <remarks>
         /// A source may acquire frames only when asked, so a call that returns false can be what makes the next frame
