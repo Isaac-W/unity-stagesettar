@@ -128,9 +128,38 @@ namespace StageSettAR
         /// <exception cref="InvalidOperationException">Another detection is in flight.</exception>
         public Awaitable<Detections> DetectAsync(CameraFrame frame, CancellationToken ct)
         {
+            ct.ThrowIfCancellationRequested();
+            BeginDetect(frame);
+            return InferAsync(frame, ct);
+        }
+
+        /// <summary>
+        /// Synchronous <see cref="DetectAsync"/> for Editor tools, where Awaitable frame stepping may not tick:
+        /// runs the whole network at once (ignoring <see cref="LayersPerFrame"/>) and blocks on the readback.
+        /// Preprocessing and readout are the same code as the async path.
+        /// </summary>
+        /// <returns>Detections owned by the detector, valid until the next call.</returns>
+        public Detections DetectBlocking(CameraFrame frame)
+        {
+            BeginDetect(frame);
+            try
+            {
+                _worker.Schedule(_input);
+                var t = ((Tensor<float>)_worker.PeekOutput()).ReadbackAndClone();
+                try { t.AsReadOnlySpan().CopyTo(_packed); }
+                finally { t.Dispose(); }
+                DecodeReadout(_packed, _n + 1, _h / _map.cellSize, _w / _map.cellSize, _det);
+                _det.frame = frame;
+                return _det;
+            }
+            finally { Finish(); }
+        }
+
+        /// <summary>Checks the frame, marks the detector busy and preprocesses the frame into the network input.</summary>
+        void BeginDetect(CameraFrame frame)
+        {
             if (_disposed) throw new ObjectDisposedException(nameof(StarDetector));
             if (_busy) throw new InvalidOperationException("StarDetector is busy.");
-            ct.ThrowIfCancellationRequested();
             if (frame.texture == null || !frame.intrinsics.IsValid) throw new ArgumentException("Frame has no texture or intrinsics.");
             if (frame.format != CameraImageFormat.Rgb && (frame.chroma == null || (frame.format == CameraImageFormat.YuvPlanar && frame.chromaV == null)))
                 throw new ArgumentException("YUV frame has no chroma texture.");
@@ -141,7 +170,6 @@ namespace StageSettAR
                 TextureConverter.ToTensor(_rt, _input, default);
             }
             catch { Finish(); throw; }
-            return InferAsync(frame, ct);
         }
 
         async Awaitable<Detections> InferAsync(CameraFrame frame, CancellationToken ct)
@@ -227,7 +255,7 @@ namespace StageSettAR
         {
             _worker?.Dispose();
             _input?.Dispose();
-            if (_rt != null) { _rt.Release(); UnityEngine.Object.Destroy(_rt); }
+            if (_rt != null) { _rt.Release(); UnityObjects.Discard(_rt); }
             _worker = null; _input = null; _rt = null;
         }
 
@@ -251,7 +279,7 @@ namespace StageSettAR
             if (_released) return;
             _released = true;
             FreeNetwork();
-            UnityEngine.Object.Destroy(_material);
+            UnityObjects.Discard(_material);
         }
 
         // ---------------------------------------------------------------- preprocessing

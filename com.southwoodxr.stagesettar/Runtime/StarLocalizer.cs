@@ -554,15 +554,21 @@ namespace StageSettAR
             return b;
         }
 
+        /// <summary>Writes the 2D-3D pairs of <paramref name="d"/> (export-frame landmark, network pixel, score) into the solver's input arrays.</summary>
+        public static void FillCorrespondences(Detections d, Vector3d[] landmarks, Vector3d[] p3, Vector2d[] p2, double[] score)
+        {
+            for (int i = 0; i < d.count; i++)
+            {
+                p3[i] = landmarks[d.landmark[i]];
+                p2[i] = d.pixel[i];
+                score[i] = d.score[i];
+            }
+        }
+
         async Awaitable<PnpResult> SolvePnp(PnpWork w, Detections d, bool hasPrior, Matrix3x3d priorR, Vector3d priorT)
         {
             int n = d.count;
-            for (int i = 0; i < n; i++)
-            {
-                w.p3[i] = _exportLandmarks[d.landmark[i]];
-                w.p2[i] = d.pixel[i];
-                w.score[i] = d.score[i];
-            }
+            FillCorrespondences(d, _exportLandmarks, w.p3, w.p2, w.score);
             CameraIntrinsics k = d.netIntrinsics;
             PnpResult r = default;
             await Awaitable.BackgroundThreadAsync();

@@ -141,6 +141,14 @@ How fixes are used: each frame gives a camera pose in the map; combined with whe
 
 Add `TextureCameraSource` (webcam or a still image plus `ManualIntrinsics`) to an object, assign it as the localizer's `cameraSource`. The pose of that source is whatever you give it, so a still photo with a known pose is a good smoke test. Select the localizer to see landmarks as gizmos.
 
+## Testing a map against a scan
+
+A `.starscan` (star-web-demo's capture file, or the same files unpacked in a folder) holds camera images with ground-truth poses in the map's world, so a map can be tested without a headset.
+
+**Tools ▸ StageSettAR ▸ Test Map Against Scan…** takes a `StarMap`, a scan, a backend, the PnP settings and a list of image scales (default 0.25, 0.5, 0.75, 1). For each scale it runs the detector and `StarPnp` on the held-out frames (`test.txt`, else every 10th frame; frames without a trustworthy pose are skipped) and reports recall within 5 cm / 5° and 10 cm / 10°, median error, mean detections and inliers, failed solves and milliseconds per frame, next to the holdout figures stored in the map. A failed solve counts as an infinite error. It is the same evaluation star-web-demo ran when it trained the map, but through the Unity detector, so it also checks the preprocessing and the scale sweep shows how far the image can shrink before accuracy drops. **Copy as CSV** puts the table on the clipboard.
+
+To watch the real `StarLocalizer` on a scan in Play mode, use `StarScanCameraSource` instead of a webcam: it replays the scan's frames at a set rate with the ground-truth pose as the camera pose. Keep the map root at the identity relative to the tracking space; a correct localization then leaves it there, and `TryGetMapRootError` gives the offset.
+
 ## Coordinate frames
 
 The export is the WebXR capture world: right-handed, y up, metres. The Unity map frame is that mirrored in z, `(x, y, -z)`; `StarMap.landmarksExport` keeps the landmarks verbatim in the export frame (as in `landmarks.json`), and PnP uses them directly with OpenCV cameras. Unity map-frame positions come only from `StarMap.LandmarkUnity(i)` / `LandmarksUnity`; the splat importer applies the same flip, so the splat sits at identity under the map root. All conversions live in `Conventions`. `topdownBounds` is a Unity-frame XZ rectangle.

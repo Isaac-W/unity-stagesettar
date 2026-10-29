@@ -1,0 +1,19 @@
+{
+    "name": "StageSettAR.Editor.Scan",
+    "rootNamespace": "StageSettAR.Editor",
+    "references": [
+        "StageSettAR",
+        "Unity.InferenceEngine"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
