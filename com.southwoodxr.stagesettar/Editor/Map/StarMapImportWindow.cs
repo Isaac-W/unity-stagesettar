@@ -27,6 +27,8 @@ namespace StageSettAR.Editor
             { "map.json", "landmarks.json", "topdown.json", "topdown.png", "model.onnx", "splat.spz" };
 
         [Serializable] class InputDto { public int width, height, rotation; public int[] rotations; }
+        // "variableSize" and "sizeMultiple" restate the model's input; width and height here are only a suggested size.
+        [Serializable] class OnnxDto { public bool variableSize; public int sizeMultiple, width, height; }
         [Serializable] class HoldoutDto { public int frames; public float recall5cm5deg, recall10cm10deg, medianCm, medianDeg; }
         [Serializable] class MapDto
         {
@@ -34,6 +36,7 @@ namespace StageSettAR.Editor
             public int version, landmarks;
             public float focal;
             public InputDto input;
+            public OnnxDto onnx;
             public HoldoutDto holdout;
         }
         [Serializable] class TopdownDto { public float minX, minZ, maxX, maxZ, y; }
@@ -65,9 +68,10 @@ namespace StageSettAR.Editor
             if (m_map == null) return;
 
             var rot = m_map.input.rotations is { Length: > 0 } ? string.Join(",", m_map.input.rotations) : m_map.input.rotation.ToString();
+            var (sw, sh) = SuggestedSize(m_map);
             EditorGUILayout.HelpBox(string.Format(CultureInfo.InvariantCulture,
-                "{0}\nLandmarks: {1}\nInput: {2}x{3}   Rotations: {4}   Focal: {5:F1}px\nHoldout: {6}\nSplat: {7}",
-                m_map.name, m_map.landmarks, m_map.input.width, m_map.input.height, rot, m_map.focal,
+                "{0}\nLandmarks: {1}\nInput: any size, multiples of 16 (suggested {2})   Rotations: {3}   Focal: {4:F1}px\nHoldout: {5}\nSplat: {6}",
+                m_map.name, m_map.landmarks, sw > 0 ? sw + "x" + sh : "none", rot, m_map.focal,
                 m_hasHoldout ? $"{m_map.holdout.recall5cm5deg:F1}% within 5cm/5deg, {m_map.holdout.recall10cm10deg:F1}% within 10cm/10deg, median {m_map.holdout.medianCm:F1}cm {m_map.holdout.medianDeg:F2}deg" : "none",
                 m_hasSplat ? "present" : "absent"), MessageType.Info);
 
@@ -106,7 +110,9 @@ namespace StageSettAR.Editor
                 if (!files.TryGetValue("map.json", out var bytes)) throw new InvalidDataException("map.json missing");
                 m_mapText = Encoding.UTF8.GetString(bytes);
                 m_map = JsonUtility.FromJson<MapDto>(m_mapText);
-                if (m_map?.input == null) throw new InvalidDataException("map.json has no input size");
+                if (m_map == null) throw new InvalidDataException("map.json is empty");
+                m_map.input ??= new InputDto();
+                m_map.onnx ??= new OnnxDto();
                 m_hasHoldout = m_map.holdout != null && m_map.holdout.frames > 0 && m_mapText.Contains("\"holdout\"");
                 m_hasSplat = zip.GetEntry("splat.spz") != null;
                 m_importSplat = m_hasSplat;
@@ -147,8 +153,14 @@ namespace StageSettAR.Editor
             var map = m_map;
             if (map.format != "starmap") throw new InvalidDataException($"Not a STAR map (format '{map.format}')");
             if (map.version > 1) throw new InvalidDataException($"Unsupported map version {map.version}");
-            if (map.input.width <= 0 || map.input.height <= 0 || map.input.width % 8 != 0 || map.input.height % 8 != 0)
-                throw new InvalidDataException($"Input size {map.input.width}x{map.input.height} is not divisible by cell size 8");
+            // map.json "origin", if present, is ignored: the landmarks already sit in the map's own frame.
+            if (m_mapText.Contains("\"variableSize\"") && !map.onnx.variableSize)
+                throw new InvalidDataException("This map's network has a fixed input size, which is not supported.");
+            if (map.onnx.sizeMultiple > 0 && map.onnx.sizeMultiple % 16 != 0)
+                throw new InvalidDataException($"Network size multiple {map.onnx.sizeMultiple} is not a multiple of 16");
+            var (sw, sh) = SuggestedSize(map);
+            if (sw % 16 != 0 || sh % 16 != 0)
+                throw new InvalidDataException($"Suggested input size {sw}x{sh} is not a multiple of 16");
             if (!files.TryGetValue("landmarks.json", out var lmBytes) || !files.ContainsKey("model.onnx"))
                 throw new InvalidDataException("Zip needs model.onnx and landmarks.json");
             var landmarks = ParseLandmarks(Encoding.UTF8.GetString(lmBytes));
@@ -227,6 +239,14 @@ namespace StageSettAR.Editor
             return path;
         }
 
+        /// <summary>The map's suggested input size: the onnx default, else the older input block; 0 x 0 if neither gives one.</summary>
+        static (int w, int h) SuggestedSize(MapDto m)
+        {
+            if (m.onnx != null && m.onnx.width > 0 && m.onnx.height > 0) return (m.onnx.width, m.onnx.height);
+            if (m.input != null && m.input.width > 0 && m.input.height > 0) return (m.input.width, m.input.height);
+            return (0, 0);
+        }
+
         static Vector3[] ParseLandmarks(string json)
         {
             var start = json.IndexOf("\"landmarks\"", StringComparison.Ordinal);
@@ -260,8 +280,8 @@ namespace StageSettAR.Editor
             sm.displayName = m.name;
             sm.created = m.created;
             sm.model = model;
-            sm.inputWidth = m.input.width;
-            sm.inputHeight = m.input.height;
+            var (sw, sh) = SuggestedSize(m);
+            if (sw > 0) { sm.suggestedWidth = sw; sm.suggestedHeight = sh; }
             sm.cellSize = 8;
             sm.focal = m.focal;
             sm.rotations = m.input.rotations is { Length: > 0 } ? m.input.rotations : new[] { m.input.rotation };

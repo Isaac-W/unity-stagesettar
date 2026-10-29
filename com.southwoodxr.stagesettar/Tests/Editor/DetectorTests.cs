@@ -106,6 +106,18 @@ namespace StageSettAR.Tests
         }
 
         [Test]
+        public void DecodeIgnoresGarbageClassIndices()
+        {
+            // 2 landmarks + reject, a 1 x 4 grid: valid 1, NaN, negative, past the last class.
+            var packed = new float[4 + 3 * 2];
+            packed[0] = 1f; packed[1] = float.NaN; packed[2] = -3f; packed[3] = 99f;
+            var d = new Detections();
+            Assert.DoesNotThrow(() => StarDetector.DecodeReadout(packed, 3, 1, 4, d));
+            Assert.AreEqual(1, d.count);
+            Assert.AreEqual(1, d.landmark[0]);
+        }
+
+        [Test]
         public void LevelCameraNeedsNoTurnAndUntrainedOrientationFallsBack()
         {
             var map = ScriptableObject.CreateInstance<StarMap>();

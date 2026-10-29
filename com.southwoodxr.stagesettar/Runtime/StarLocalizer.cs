@@ -79,6 +79,10 @@ namespace StageSettAR
         {
             [Tooltip("Where the landmark network runs. GPUCompute is right for Quest and desktop GPUs.")]
             public BackendType backend = BackendType.GPUCompute;
+            [Tooltip("Network layers run per rendered frame, so no single frame pays for the whole network. Default 10: at the default inference rate the network finishes well inside one interval, and each frame only dispatches a slice. 0 runs the whole network in one frame.")]
+            public int layersPerFrame = 10;
+            [Tooltip("Most pixels the network sees. Default 500000 (about 800 x 600): the input is otherwise as large as the camera image allows at the map's focal length, which can be slow on a headset. When the cap applies, the centre of the image is used. 0 means no limit.")]
+            public int maxInputPixels = 500000;
             [Tooltip("Pose-solver tuning. The defaults work for the Quest camera.")]
             public PnpSettings pnp = PnpSettings.Default;
             [Tooltip("How recent fixes are combined into one alignment. The defaults average the last 30 fixes (at most a minute old), which smooths noise without trusting drifting tracking for long.")]
@@ -189,7 +193,7 @@ namespace StageSettAR
         const int MaxCandidates = 32, RejectsToReseed = 3;
 
         StarDetector _detector;
-        StarMap _detectorMap; // the map _detector was built for: its network, input size and landmark count
+        StarMap _detectorMap; // the map _detector was built for: its network and landmark count
         AlignmentSolver _solver;
         SessionScaleEstimator _scale;
         StarMap _scaleMap;   // the map _scale was learned on
@@ -259,6 +263,11 @@ namespace StageSettAR
             if (map == null || cameraSource == null)
             {
                 Debug.LogError("[StageSettAR] StarLocalizer needs a map and a camera source.", this);
+                return;
+            }
+            if (map.LandmarkCount < 4)
+            {
+                Debug.LogError($"[StageSettAR] Map '{map.name}' has {map.LandmarkCount} landmarks; at least 4 are needed to solve a pose.", this);
                 return;
             }
             cameraSource.TargetFocal = map.focal;
@@ -333,7 +342,8 @@ namespace StageSettAR
                     _warmed = false;
                 }
                 while (_detector.Busy) await Awaitable.NextFrameAsync(ct);
-                if (!_warmed) { _warmed = true; await _detector.WarmupAsync(); }
+                _detector.LayersPerFrame = advanced.layersPerFrame;
+                if (!_warmed) { _warmed = true; await _detector.WarmupAsync(ct); }
                 _lastId = 0;
 
                 while (true)
@@ -356,6 +366,8 @@ namespace StageSettAR
                     if (State == LocalizerState.Initializing && _initStart < 0) _initStart = now;
                     CheckJump(frame.cameraPose.position, now);
 
+                    _detector.LayersPerFrame = advanced.layersPerFrame;
+                    _detector.MaxInputPixels = advanced.maxInputPixels;
                     Detections d = await _detector.DetectAsync(frame, ct);
                     await ProcessFrame(work, frame, d, ct);
                     ct.ThrowIfCancellationRequested();

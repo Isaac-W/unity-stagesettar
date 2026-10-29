@@ -1,5 +1,6 @@
 using Unity.InferenceEngine;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace StageSettAR
 {
@@ -23,9 +24,9 @@ namespace StageSettAR
         [Header("Network")]
         public ModelAsset model;
 
-        [Tooltip("Network input size in pixels. The ONNX input is fixed to this.")]
-        public int inputWidth = 640;
-        public int inputHeight = 352;
+        [Tooltip("Suggested network input size in pixels, used only for warm-up. The network takes any size that is a multiple of 16; the detector picks the size per camera frame.")]
+        [FormerlySerializedAs("inputWidth")] public int suggestedWidth = 640;
+        [FormerlySerializedAs("inputHeight")] public int suggestedHeight = 352;
 
         [Tooltip("Output cell size in input pixels.")]
         public int cellSize = 8;
@@ -83,8 +84,5 @@ namespace StageSettAR
 
         /// <summary>Landmark <paramref name="i"/> in the Unity map frame.</summary>
         public Vector3 LandmarkUnity(int i) => LandmarksUnity[i];
-
-        public int GridWidth => inputWidth / cellSize;
-        public int GridHeight => inputHeight / cellSize;
     }
 }

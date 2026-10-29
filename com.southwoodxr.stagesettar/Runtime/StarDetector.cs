@@ -38,13 +38,15 @@ namespace StageSettAR
     /// <summary>
     /// Runs a map's landmark network on camera frames. The camera image is rotated, scaled and cropped
     /// on the GPU to the network's trained camera (port of star-mobile resample.ts), inference runs in
-    /// Sentis, and the readout (star-mobile readout.ts) is part of the same Sentis graph so that only
+    /// Sentis (optionally a few layers per frame), and the readout (star-mobile readout.ts) is part of the same Sentis graph so that only
     /// about 5.5k floats are read back, asynchronously, instead of the 7 MB of logits.
     /// </summary>
     /// <remarks>
     /// Network input is <c>image01 * 255</c>: the shader writes the sRGB-encoded 8-bit colour as 0..1
     /// (linear-colour-space projects are handled by re-encoding each fetch) and the graph scales it.
     /// YUV frames (<see cref="CameraFrame.format"/>) are converted to that same colour in the same pass.
+    /// The network input is as large as the frame allows (multiples of 16, see <see cref="Geometry"/>); the worker,
+    /// input tensor and render texture are rebuilt only when that size changes.
     /// Not re-entrant: one detection at a time.
     /// </remarks>
     public sealed class StarDetector : IDisposable
@@ -55,33 +57,42 @@ namespace StageSettAR
             YuvId = Shader.PropertyToID("_Yuv"), ChromaSizeId = Shader.PropertyToID("_ChromaSize"),
             ChromaUId = Shader.PropertyToID("_ChromaU"), ChromaVId = Shader.PropertyToID("_ChromaV");
 
-        readonly StarMap _map;
-        readonly int _n, _hw;
-        readonly Worker _worker;
-        readonly Tensor<float> _input;
-        readonly RenderTexture _rt;
-        readonly Material _material;
-        readonly float[] _packed;
-        readonly Detections _det;
-        int _prevQuarter = -1;
-        bool _busy, _disposed, _released;
+        const int SizeMultiple = 16;
+        const string LogitsOutput = "logits";
 
-        /// <summary>Builds the worker for <paramref name="map"/>. GPUCompute is right for Quest and desktop GPUs.</summary>
+        readonly StarMap _map;
+        readonly BackendType _backend;
+        readonly int _n;
+        readonly Material _material;
+        readonly Detections _det;
+        Worker _worker;
+        Tensor<float> _input;
+        RenderTexture _rt;
+        float[] _packed;
+        int _w, _h;              // the size the worker, input and render texture were built for
+        int _prevQuarter = -1;
+        bool _busy, _disposed, _released, _stale;
+
+        /// <summary>
+        /// Layers of the network run per rendered frame; 0 or less runs the whole network at once. Spreading the work
+        /// keeps one frame from paying for the entire dispatch. Takes effect from the next detection.
+        /// </summary>
+        public int LayersPerFrame { get; set; }
+
+        /// <summary>Most pixels the network input may have; 0 or less for no limit. Takes effect from the next detection.</summary>
+        public int MaxInputPixels { get; set; }
+
+        /// <summary>Prepares a detector for <paramref name="map"/>. GPUCompute is right for Quest and desktop GPUs.</summary>
+        /// <remarks>The network itself is built on first use (warm-up or the first frame), once the input size is known.</remarks>
         public StarDetector(StarMap map, BackendType backend = BackendType.GPUCompute)
         {
             if (map == null || map.model == null) throw new ArgumentException("Map has no model.");
             _map = map;
+            _backend = backend;
             _n = map.LandmarkCount;
-            _hw = map.GridWidth * map.GridHeight;
             var shader = Resources.Load<Shader>(ShaderResource);
             if (shader == null) throw new InvalidOperationException("StageSettAR preprocess shader missing from Resources.");
             _material = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-            _rt = new RenderTexture(map.inputWidth, map.inputHeight, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear)
-            { filterMode = FilterMode.Point, hideFlags = HideFlags.HideAndDontSave };
-            _rt.Create();
-            _input = new Tensor<float>(new TensorShape(1, 3, map.inputHeight, map.inputWidth));
-            _worker = new Worker(BuildModel(map), backend);
-            _packed = new float[_hw + 3 * _n];
             _det = new Detections(_n);
         }
 
@@ -91,15 +102,18 @@ namespace StageSettAR
         /// <summary>
         /// Runs the network once on black so shader compilation happens before the first real frame
         /// instead of stalling it. Optional; the first <see cref="DetectAsync"/> otherwise pays for it.
+        /// Uses the map's suggested input size; real frames may rebuild the network at another size.
         /// </summary>
-        public async Awaitable WarmupAsync()
+        public async Awaitable WarmupAsync(CancellationToken ct = default)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(StarDetector));
             if (_busy) throw new InvalidOperationException("StarDetector is busy.");
             _busy = true;
             try
             {
-                _worker.Schedule(_input);
+                EnsureSize(Mathf.Max(SizeMultiple, _map.suggestedWidth / SizeMultiple * SizeMultiple),
+                           Mathf.Max(SizeMultiple, _map.suggestedHeight / SizeMultiple * SizeMultiple));
+                await RunNetwork(ct);
                 (await ReadOutput()).Dispose();
             }
             finally { Finish(); }
@@ -124,16 +138,16 @@ namespace StageSettAR
             {
                 Preprocess(frame);
                 TextureConverter.ToTensor(_rt, _input, default);
-                _worker.Schedule(_input);
             }
             catch { Finish(); throw; }
-            return ReadAsync(frame, ct);
+            return InferAsync(frame, ct);
         }
 
-        async Awaitable<Detections> ReadAsync(CameraFrame frame, CancellationToken ct)
+        async Awaitable<Detections> InferAsync(CameraFrame frame, CancellationToken ct)
         {
             try
             {
+                await RunNetwork(ct);
                 var t = await ReadOutput();
                 try
                 {
@@ -142,11 +156,61 @@ namespace StageSettAR
                     t.AsReadOnlySpan().CopyTo(_packed);
                 }
                 finally { t.Dispose(); }
-                DecodeReadout(_packed, _n + 1, _map.GridHeight, _map.GridWidth, _det);
+                DecodeReadout(_packed, _n + 1, _h / _map.cellSize, _w / _map.cellSize, _det);
                 _det.frame = frame;
                 return _det;
             }
             finally { Finish(); }
+        }
+
+        /// <summary>
+        /// Schedules the network. With <see cref="LayersPerFrame"/> set, steps that many layers and waits a frame between
+        /// steps; the preprocessed input must stay untouched until this ends, which <see cref="Busy"/> guarantees.
+        /// </summary>
+        async Awaitable RunNetwork(CancellationToken ct)
+        {
+            int perFrame = LayersPerFrame;
+            if (perFrame <= 0) { _worker.Schedule(_input); return; }
+            bool finished = false;
+            try
+            {
+                var steps = _worker.ScheduleIterable(_input);
+                for (int i = 1; steps.MoveNext(); i++)
+                {
+                    if (i % perFrame != 0) continue;
+                    await Awaitable.NextFrameAsync(ct);
+                    if (_disposed) throw new OperationCanceledException();
+                }
+                finished = true;
+            }
+            finally
+            {
+                // A half-run schedule leaves the worker in an unknown state, so the next detection builds a fresh one.
+                if (!finished) _stale = true;
+            }
+        }
+
+        /// <summary>Builds (or rebuilds, if the size changed or a run was cut short) the network objects for a w x h input.</summary>
+        void EnsureSize(int w, int h)
+        {
+            if (_worker != null && !_stale && w == _w && h == _h) return;
+            FreeNetwork();
+            var worker = new Worker(BuildModel(_map, w, h), _backend);
+            _worker = worker;
+            _input = new Tensor<float>(new TensorShape(1, 3, h, w));
+            _rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Linear)
+            { filterMode = FilterMode.Point, hideFlags = HideFlags.HideAndDontSave };
+            _rt.Create();
+            _packed = new float[(w / _map.cellSize) * (h / _map.cellSize) + 3 * _n];
+            _w = w; _h = h; _stale = false;
+        }
+
+        void FreeNetwork()
+        {
+            _worker?.Dispose();
+            _input?.Dispose();
+            if (_rt != null) { _rt.Release(); UnityEngine.Object.Destroy(_rt); }
+            _worker = null; _input = null; _rt = null;
         }
 
         Awaitable<Tensor<float>> ReadOutput() => ((Tensor<float>)_worker.PeekOutput()).ReadbackAndCloneAsync();
@@ -168,10 +232,7 @@ namespace StageSettAR
         {
             if (_released) return;
             _released = true;
-            _worker.Dispose();
-            _input.Dispose();
-            _rt.Release();
-            UnityEngine.Object.Destroy(_rt);
+            FreeNetwork();
             UnityEngine.Object.Destroy(_material);
         }
 
@@ -226,7 +287,9 @@ namespace StageSettAR
             public float rotatedW, rotatedH;
             /// <summary>Isotropic scale from the rotated image to the network input.</summary>
             public float scale;
-            /// <summary>Crop window in the rotated image (may exceed it; the shader pads with black).</summary>
+            /// <summary>Network input size in pixels, multiples of 16.</summary>
+            public int outW, outH;
+            /// <summary>Crop window in the rotated image. Inside it unless the frame is smaller than 16 scaled pixels (the shader pads with black).</summary>
             public float x0, y0, cropW, cropH;
             /// <summary>Box-filter taps per axis.</summary>
             public int taps;
@@ -235,12 +298,14 @@ namespace StageSettAR
         }
 
         /// <summary>
-        /// Intrinsics through turn, scale and crop. <paramref name="k"/> must already be at srcW x srcH.
+        /// Network input size and intrinsics through turn, scale and crop. <paramref name="k"/> must already be at srcW x srcH.
         /// Rotating the camera q clockwise turns gives K' = (fy, fx, h - cy, cx) and swaps the size
-        /// (conventions.ts rotateCamera); then one scale s = focal / fx' and a crop centred on the image centre
-        /// (not the principal point): fx'' = fx' s, cx'' = (cx' - x0) s.
+        /// (conventions.ts rotateCamera); then one scale s = focal / fx'. The network input is the largest multiple-of-16
+        /// size inside the scaled frame (and inside <paramref name="maxPixels"/>, keeping the aspect), cropped about the
+        /// image centre (not the principal point): fx'' = fx' s, cx'' = (cx' - x0) s.
         /// </summary>
-        public static PreprocessGeometry Geometry(CameraIntrinsics k, int srcW, int srcH, int q, float mapFocal, int outW, int outH)
+        /// <param name="maxPixels">Most pixels the network input may have; 0 or less for no limit.</param>
+        public static PreprocessGeometry Geometry(CameraIntrinsics k, int srcW, int srcH, int q, float mapFocal, int maxPixels = 0)
         {
             float fx = k.fx, fy = k.fy, cx = k.cx, cy = k.cy, rw = srcW, rh = srcH;
             for (int i = 0; i < q; i++)
@@ -250,14 +315,25 @@ namespace StageSettAR
             }
 
             float s = mapFocal / fx;
+            float sw = rw * s, sh = rh * s;
+            int outW = FloorToMultiple(sw), outH = FloorToMultiple(sh);
+            if (maxPixels > 0 && (long)outW * outH > maxPixels)
+            {
+                float t = Mathf.Sqrt(maxPixels / (sw * sh));
+                outW = FloorToMultiple(sw * t);
+                outH = FloorToMultiple(sh * t);
+            }
             float cw = outW / s, ch = outH / s, x0 = (rw - cw) * 0.5f, y0 = (rh - ch) * 0.5f;
             return new PreprocessGeometry
             {
-                rotatedW = rw, rotatedH = rh, scale = s, x0 = x0, y0 = y0, cropW = cw, cropH = ch,
+                rotatedW = rw, rotatedH = rh, scale = s, outW = outW, outH = outH,
+                x0 = x0, y0 = y0, cropW = cw, cropH = ch,
                 taps = Mathf.Clamp(Mathf.CeilToInt(cw / outW), 1, 4),
                 net = new CameraIntrinsics(fx * s, fy * s, (cx - x0) * s, (cy - y0) * s, outW, outH),
             };
         }
+
+        static int FloorToMultiple(float v) => Mathf.Max(SizeMultiple, Mathf.FloorToInt(v / SizeMultiple) * SizeMultiple);
 
         /// <summary>
         /// CPU reference of the shader's YUV conversion: BT.601 full range, all values 0..1 (Cb and Cr centred on 0.5),
@@ -281,9 +357,9 @@ namespace StageSettAR
             int q = ChooseQuarterTurns(_map, frame.cameraPose, frame.hasPose, _prevQuarter, srcW < srcH);
             _prevQuarter = q;
 
-            // The crop window may exceed the image, in which case the shader pads with black.
-            int outW = _map.inputWidth, outH = _map.inputHeight;
-            var g = Geometry(k, srcW, srcH, q, _map.focal, outW, outH);
+            var g = Geometry(k, srcW, srcH, q, _map.focal, MaxInputPixels);
+            int outW = g.outW, outH = g.outH;
+            EnsureSize(outW, outH);
 
             bool yuv = frame.format != CameraImageFormat.Rgb;
             bool linearFetch = !yuv && GraphicsFormatUtility.IsSRGBFormat(tex.graphicsFormat) && QualitySettings.activeColorSpace == ColorSpace.Linear;
@@ -307,12 +383,17 @@ namespace StageSettAR
 
         // ---------------------------------------------------------------- readout graph
 
-        static Model BuildModel(StarMap map)
+        static Model BuildModel(StarMap map, int w, int h)
         {
             var g = new FunctionalGraph();
-            var image = g.AddInput(DataType.Float, new TensorShape(1, 3, map.inputHeight, map.inputWidth), "image01");
-            var logits = Functional.Forward(ModelLoader.Load(map.model), image * 255f)[0];
-            return g.Compile(BuildReadout(logits, map.LandmarkCount + 1, map.GridHeight, map.GridWidth, map.cellSize));
+            var image = g.AddInput(DataType.Float, new TensorShape(1, 3, h, w), "image01");
+            var onnx = ModelLoader.Load(map.model);
+            var outputs = Functional.Forward(onnx, image * 255f);
+            // By name, so extra outputs in the model cannot shift it; a lone unnamed output is taken as the logits.
+            int at = onnx.outputs.FindIndex(o => o.name == LogitsOutput);
+            if (at < 0 && onnx.outputs.Count == 1) at = 0;
+            if (at < 0) throw new InvalidOperationException($"Model has no '{LogitsOutput}' output.");
+            return g.Compile(BuildReadout(outputs[at], map.LandmarkCount + 1, h / map.cellSize, w / map.cellSize, map.cellSize));
         }
 
         /// <summary>A graph that only does the readout, input "logits" [1, classes, gh, gw]. For tests.</summary>
@@ -358,7 +439,11 @@ namespace StageSettAR
             int n = classes - 1, hw = gh * gw;
             into.Ensure(n);
             Array.Clear(into.seen, 0, into.seen.Length);
-            for (int c = 0; c < hw; c++) into.seen[(int)packed[c]] = true;
+            for (int c = 0; c < hw; c++)
+            {
+                float v = packed[c];
+                if (v >= 0f && v < classes) into.seen[(int)v] = true;   // NaN fails both tests
+            }
             int count = 0;
             for (int l = 0; l < n; l++)
             {

@@ -54,45 +54,64 @@ namespace StageSettAR.Tests
         [Test]
         public void IntrinsicsThroughTurnScaleAndCrop()
         {
-            // 1280 x 1280 frame, one clockwise turn, network input 800 x 448 trained at focal 685.9.
+            // 1280 x 1280 frame, one clockwise turn, trained at focal 685.9: the scaled frame is 1011.8 square,
+            // so the network gets 1008 x 1008 (the largest multiples of 16), centre-cropped.
             var k = new CameraIntrinsics(867.7f, 867.7f, 639.5f, 639.5f, 1280, 1280);
-            var g = StarDetector.Geometry(k, 1280, 1280, 1, 685.9f, 800, 448);
+            var g = StarDetector.Geometry(k, 1280, 1280, 1, 685.9f);
 
             // turn: fx' = fy, cx' = H - cy
             const double fx1 = 867.7, cx1 = 1280 - 639.5, cy1 = 639.5;
             double s = 685.9 / fx1;                          // 0.79048
-            double cw = 800 / s, ch = 448 / s;               // 1012.04 x 566.74
-            double x0 = (1280 - cw) / 2, y0 = (1280 - ch) / 2;
+            double cw = 1008 / s;                            // 1275.2
+            double x0 = (1280 - cw) / 2;
 
+            Assert.AreEqual(1008, g.outW);
+            Assert.AreEqual(1008, g.outH);
             Assert.AreEqual(1280f, g.rotatedW, Tol);
             Assert.AreEqual(1280f, g.rotatedH, Tol);
             Assert.AreEqual(s, g.scale, 1e-5);
             Assert.AreEqual(0.79048, g.scale, 1e-4);
             Assert.AreEqual(cw, g.cropW, 0.01);
-            Assert.AreEqual(133.98, g.x0, 0.01);
+            Assert.AreEqual(x0, g.x0, 0.01);
             Assert.AreEqual(2, g.taps);
 
             Assert.AreEqual(685.9, g.net.fx, 0.01);          // fx'' = fx' s = the map focal
             Assert.AreEqual(685.9, g.net.fy, 0.01);
             Assert.AreEqual((cx1 - x0) * s, g.net.cx, 0.01);
-            Assert.AreEqual((cy1 - y0) * s, g.net.cy, 0.01);
-            Assert.AreEqual(400.4, g.net.cx, 0.05);
-            Assert.AreEqual(223.6, g.net.cy, 0.05);
-            Assert.AreEqual(800, g.net.width);
-            Assert.AreEqual(448, g.net.height);
+            Assert.AreEqual((cy1 - x0) * s, g.net.cy, 0.01);
+            Assert.AreEqual(1008, g.net.width);
+            Assert.AreEqual(1008, g.net.height);
+        }
+
+        [Test]
+        public void PixelCapShrinksTheCropAndKeepsTheAspect()
+        {
+            var k = new CameraIntrinsics(500f, 500f, 639.5f, 479.5f, 1280, 960);
+            var g = StarDetector.Geometry(k, 1280, 960, 0, 500f);     // scale 1: 1280 x 960
+            Assert.AreEqual(1280, g.outW);
+            Assert.AreEqual(960, g.outH);
+
+            g = StarDetector.Geometry(k, 1280, 960, 0, 500f, 300000);
+            Assert.AreEqual(0, g.outW % 16);
+            Assert.AreEqual(0, g.outH % 16);
+            Assert.LessOrEqual(g.outW * g.outH, 300000);
+            Assert.AreEqual(1280f / 960f, (float)g.outW / g.outH, 0.05f);
+            Assert.AreEqual(1f, g.scale, 1e-6f);                      // the cap crops, it does not rescale
+            Assert.AreEqual((1280 - g.outW) / 2f, g.x0, 1e-3f);
+            Assert.AreEqual(g.outW, g.net.width);
         }
 
         [Test]
         public void IntrinsicsWithoutTurnAndWithPortraitSizeSwap()
         {
             var k = new CameraIntrinsics(500f, 520f, 300f, 200f, 640, 480);
-            var g0 = StarDetector.Geometry(k, 640, 480, 0, 500f, 640, 480);
+            var g0 = StarDetector.Geometry(k, 640, 480, 0, 500f);
             Assert.AreEqual(1f, g0.scale, 1e-6f);
             Assert.AreEqual(300f, g0.net.cx, 1e-3f);
             Assert.AreEqual(200f, g0.net.cy, 1e-3f);
             Assert.AreEqual(520f, g0.net.fy, 1e-3f);
 
-            var g1 = StarDetector.Geometry(k, 640, 480, 1, 520f, 480, 640);   // turned: 480 x 640, fx' = 520
+            var g1 = StarDetector.Geometry(k, 640, 480, 1, 520f);   // turned: 480 x 640, fx' = 520
             Assert.AreEqual(480f, g1.rotatedW, Tol);
             Assert.AreEqual(640f, g1.rotatedH, Tol);
             Assert.AreEqual(480f - 200f, g1.net.cx, 1e-3f);
