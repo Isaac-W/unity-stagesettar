@@ -14,6 +14,8 @@ namespace StageSettAR
     /// camera it follows (so it never blocks the user's view in play mode or the XR Device
     /// Simulator) but stays visible to the Scene view. Its GameObject is tagged EditorOnly, so
     /// Unity leaves it out of builds.
+    /// New rigs use <see cref="EditorCharacter"/> (a person model) instead; this stays so scenes made
+    /// with the primitive model keep working.
     /// </remarks>
     [ExecuteAlways]
     [AddComponentMenu("StageSettAR/Editor User Model")]

@@ -33,6 +33,12 @@ namespace StageSettAR.Editor
 
         /// <summary>Performs the step. Called only when <see cref="GetStatus"/> returned <see cref="SetupStatus.Needed"/>.</summary>
         void Run();
+
+        /// <summary>
+        /// Whether this step being <see cref="SetupStatus.Needed"/> opens the window at editor start.
+        /// Steps about the open scene rather than the project say no, or every scene without a rig would.
+        /// </summary>
+        bool OpensWindow => true;
     }
 
     /// <summary>A step can also draw extra controls (such as optional buttons) under its description in the Setup window.</summary>

@@ -43,7 +43,7 @@ namespace StageSettAR.Editor
 
         string m_zip, m_mapText, m_dest;
         MapDto m_map;
-        bool m_hasSplat, m_hasHoldout, m_importSplat = true, m_addToScene = true, m_bakeShells;
+        bool m_hasSplat, m_hasHoldout, m_importSplat = true, m_addToScene = true;
         Gsplat.CompressionMode m_compression = Gsplat.CompressionMode.Spark;
         string m_error;
 
@@ -102,14 +102,6 @@ namespace StageSettAR.Editor
                 m_compression = (Gsplat.CompressionMode)EditorGUILayout.EnumPopup("Splat compression", m_compression);
             }
             m_addToScene = EditorGUILayout.Toggle("Add to open scene", m_addToScene);
-            using (new EditorGUI.DisabledScope(!splatOk || !m_importSplat || !m_addToScene))
-            {
-                m_bakeShells = EditorGUILayout.Toggle(new GUIContent("Bake panoramic shells",
-                    "Bakes the far-away part of the splat into a few cheap shells once the map is in the scene. Takes a while; it is the same as Tools > StageSettAR > Bake Panoramic Shells."),
-                    m_bakeShells && splatOk && m_importSplat && m_addToScene);
-            }
-            if (splatOk && m_importSplat && !m_addToScene)
-                EditorGUILayout.HelpBox("To bake shells, add the map to the open scene, select the splat and use Tools > StageSettAR > Bake Panoramic Shells.", MessageType.None);
 
             if (GUILayout.Button("Import", GUILayout.Height(28)))
             {
@@ -190,7 +182,10 @@ namespace StageSettAR.Editor
                 throw new InvalidDataException($"landmarks.json has {landmarks.Length} landmarks, map.json says {map.landmarks}");
 
             var name = Sanitize(map.name);
+            // Every import is a new environment: an existing folder is never written into, so maps imported
+            // earlier (and anything authored under them) are left exactly as they are.
             var dest = m_dest.TrimEnd('/');
+            if (AssetDatabase.IsValidFolder(dest)) dest = AssetDatabase.GenerateUniqueAssetPath(dest);
             EditorUtility.DisplayProgressBar("Importing STAR map", "Writing files", 0.1f);
 
             var modelPath = Write(dest + "/model.onnx", files["model.onnx"]);
@@ -248,11 +243,7 @@ namespace StageSettAR.Editor
             Debug.Log($"[StageSettAR] Imported '{map.name}' ({landmarks.Length} landmarks{(splat ? ", splat" : "")}) to {dest}", starMap);
             if (m_addToScene)
             {
-                var instance = AddToScene(prefab);
-                var renderer = instance ? instance.GetComponentInChildren<GsplatRenderer>(true) : null;
-                if (m_bakeShells && importSplat && renderer)
-                    // After the import has finished, so the bake finds the splat fully loaded.
-                    EditorApplication.delayCall += () => { if (renderer) SplatShellsEditor.BakeFor(renderer); };
+                AddToScene(prefab);
             }
         }
 
@@ -330,59 +321,64 @@ namespace StageSettAR.Editor
             return sm;
         }
 
-        /// <summary>
-        /// Creates the prefab, or on re-import only refreshes its references so authored Content survives.
-        /// </summary>
+        /// <summary>Creates the map's prefab. Always a new one: <see cref="Import"/> writes each import to its own folder.</summary>
+        /// <remarks>
+        /// The splat and floor image are references for placing content and are tagged EditorOnly, so builds leave
+        /// them out; a developer who wants the splat on device untags it and adds effects themselves. They and the
+        /// floor collider are locked (<see cref="LockedObjects"/>): fixed to the map root, which the localizer moves
+        /// into the room, and never picked in the Scene view, so clicks reach the Content placed over them.
+        /// </remarks>
         static GameObject BuildPrefab(string path, string name, StarMap map, GsplatAsset splat, Texture2D topdown, TopdownDto td)
         {
-            var exists = File.Exists(path);
-            var root = exists ? PrefabUtility.LoadPrefabContents(path) : new GameObject("STAR Map " + map.displayName);
+            var root = new GameObject("STAR Map " + map.displayName);
             try
             {
-                var loc = root.GetComponent<StarLocalizer>() ?? root.AddComponent<StarLocalizer>();
+                var loc = root.AddComponent<StarLocalizer>();
                 loc.map = map;
                 loc.mapRoot = root.transform;
 
                 if (splat)
                 {
                     var child = Child(root, "Splat");
-                    var r = child.GetComponent<GsplatRenderer>() ?? child.AddComponent<GsplatRenderer>();
+                    child.tag = "EditorOnly";
+                    var r = child.AddComponent<GsplatRenderer>();
                     // Through SerializedObject so GsplatRenderer.OnValidate records the asset GUID (reimport refresh).
                     var so = new SerializedObject(r);
                     so.FindProperty("GsplatAsset").objectReferenceValue = splat;
                     so.ApplyModifiedPropertiesWithoutUndo();
+                    LockedObjects.Lock(child);
                 }
 
                 Child(root, "Content");
 
                 if (topdown)
                 {
-                    // Created (active) only with the prefab. On re-import a Floor the user deleted stays gone,
-                    // and one they deactivated stays off; an existing one only gets its placement refreshed.
-                    var floor = root.transform.Find("Floor")?.gameObject;
-                    if (!floor && !exists)
-                    {
-                        floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                        floor.name = "Floor";
-                        UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
-                        floor.transform.SetParent(root.transform, false);
-                    }
-                    if (floor)
-                    {
-                        var b = map.topdownBounds;
-                        // Quad lying flat: local y -> +z, so uv v follows Unity z, matching the PNG orientation.
-                        floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
-                        floor.transform.localPosition = new Vector3(b.center.x, map.topdownY + 0.005f, b.center.y);
-                        floor.transform.localScale = new Vector3(b.width, b.height, 1);
-                        floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), topdown);
-                    }
+                    var b = map.topdownBounds;
+                    var floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    floor.name = "Floor";
+                    floor.tag = "EditorOnly";
+                    UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
+                    floor.transform.SetParent(root.transform, false);
+                    // Quad lying flat: local y -> +z, so uv v follows Unity z, matching the PNG orientation.
+                    floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
+                    floor.transform.localPosition = new Vector3(b.center.x, map.topdownY + 0.005f, b.center.y);
+                    floor.transform.localScale = new Vector3(b.width, b.height, 1);
+                    floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), topdown);
+                    LockedObjects.Lock(floor);
+
+                    // Invisible ground the size of the room, so dropped and thrown objects land on the real
+                    // floor. Kept in builds; delete it if the experience does not want it.
+                    const float thickness = 0.1f;
+                    var ground = Child(root, "Floor Collider");
+                    ground.transform.localPosition = new Vector3(b.center.x, map.topdownY - thickness * 0.5f, b.center.y);
+                    ground.AddComponent<BoxCollider>().size = new Vector3(b.width, thickness, b.height);
+                    LockedObjects.Lock(ground);
                 }
                 return PrefabUtility.SaveAsPrefabAsset(root, path);
             }
             finally
             {
-                if (exists) PrefabUtility.UnloadPrefabContents(root);
-                else UnityEngine.Object.DestroyImmediate(root);
+                UnityEngine.Object.DestroyImmediate(root);
             }
         }
 

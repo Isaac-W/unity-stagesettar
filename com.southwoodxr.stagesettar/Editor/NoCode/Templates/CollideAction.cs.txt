@@ -1,0 +1,22 @@
+using UnityEngine;
+using UnityEngine.Events;
+
+[AddComponentMenu("No-Code/Collide Action")]
+public class CollideAction : MonoBehaviour
+{
+    [Header("Collision Settings")]
+    [Tooltip("Tag of the object that activates the event. The Collider must NOT be a trigger, and at least one object in the collision needs a Rigidbody.")]
+    public string colliderTagName;
+
+    [Header("Events")]
+    [Tooltip("Invoked when an object with the matching tag collides with this object.")]
+    public UnityEvent onCollision;
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (!string.IsNullOrEmpty(colliderTagName) && collision.gameObject.CompareTag(colliderTagName))
+        {
+            onCollision.Invoke();
+        }
+    }
+}

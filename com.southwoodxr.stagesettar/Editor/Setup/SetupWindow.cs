@@ -30,11 +30,11 @@ namespace StageSettAR.Editor
             {
                 SessionState.SetBool(k_shownKey, true);
                 foreach (var step in Discover())
-                    if (Query(step, out _) == SetupStatus.Needed) { Open(); return; }
+                    if (step.OpensWindow && Query(step, out _) == SetupStatus.Needed) { Open(); return; }
             };
         }
 
-        static List<ISetupStep> Discover()
+        internal static List<ISetupStep> Discover()
         {
             var list = new List<ISetupStep>();
             foreach (var t in TypeCache.GetTypesDerivedFrom<ISetupStep>())
@@ -47,7 +47,7 @@ namespace StageSettAR.Editor
             return list;
         }
 
-        static SetupStatus Query(ISetupStep step, out string detail)
+        internal static SetupStatus Query(ISetupStep step, out string detail)
         {
             try { return step.GetStatus(out detail); }
             catch (Exception e)
@@ -74,7 +74,8 @@ namespace StageSettAR.Editor
 
         void OnGUI()
         {
-            EditorGUILayout.HelpBox("Click each button that is enabled, top to bottom. Unity may recompile in between; that is normal.", MessageType.None);
+            DrawRunAll();
+            EditorGUILayout.HelpBox("Or click each enabled button yourself, top to bottom. Unity may recompile in between; that is normal.", MessageType.None);
             m_scroll = EditorGUILayout.BeginScrollView(m_scroll);
             foreach (var step in m_steps) DrawStep(step);
             EditorGUILayout.EndScrollView();
@@ -85,6 +86,23 @@ namespace StageSettAR.Editor
             if (ignore != StageSettARSettings.instance.IgnoreSplatsInVcs) StageSettARSettings.instance.IgnoreSplatsInVcs = ignore;
             if (GUILayout.Button("Use a local UnitySplats folder instead of downloading…", GUILayout.Height(22)))
                 SplatDependencyStep.UseLocalFolder();
+        }
+
+        static void DrawRunAll()
+        {
+            if (SetupRunAll.Active)
+            {
+                EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
+                var title = SetupRunAll.CurrentTitle;
+                EditorGUILayout.LabelField(title.Length > 0 ? "Setting up: " + title + "…" : "Setting up…", EditorStyles.wordWrappedLabel);
+                if (GUILayout.Button("Stop", GUILayout.Width(60), GUILayout.Height(22))) SetupRunAll.Cancel();
+                EditorGUILayout.EndHorizontal();
+                return;
+            }
+            if (GUILayout.Button("Set up everything", GUILayout.Height(30))) SetupRunAll.Start();
+            var message = SetupRunAll.Message;
+            if (message.Length > 0) EditorGUILayout.HelpBox(message, MessageType.None);
+            EditorGUILayout.Space();
         }
 
         void DrawStep(ISetupStep step)
@@ -105,7 +123,7 @@ namespace StageSettAR.Editor
             EditorGUILayout.LabelField(detail, EditorStyles.wordWrappedMiniLabel);
             if (step is ISetupStepOptions options) options.DrawOptions();
             EditorGUILayout.EndVertical();
-            using (new EditorGUI.DisabledScope(status != SetupStatus.Needed))
+            using (new EditorGUI.DisabledScope(status != SetupStatus.Needed || SetupRunAll.Active))
                 if (GUILayout.Button(step.ActionLabel, GUILayout.Width(90), GUILayout.Height(24)))
                     RunStep(step);
             EditorGUILayout.EndHorizontal();

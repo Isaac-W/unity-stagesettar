@@ -1,0 +1,63 @@
+using UnityEngine;
+using UnityEngine.Events;
+
+[AddComponentMenu("No-Code/Sequence Action")]
+public class SequenceAction : MonoBehaviour
+{
+    [Header("Sequence Settings")]
+    [Tooltip("Actions to run, in order.")]
+    public UnityEvent[] steps;
+
+    [Tooltip("Seconds to wait before each step, counted from when the previous step fired. Missing entries are treated as 0.")]
+    public float[] stepDelays;
+
+    private int currentStep;
+    private float elapsedTime;
+    private bool running;
+
+    private void Update()
+    {
+        if (!running)
+        {
+            return;
+        }
+
+        elapsedTime += Time.deltaTime;
+
+        // First, get the current step's delay (watch out for bounds)
+        float delay = 0f;
+        if (stepDelays != null && currentStep < stepDelays.Length)
+        {
+            delay = stepDelays[currentStep];
+        }
+
+        if (elapsedTime >= delay)
+        {
+            steps[currentStep]?.Invoke();
+            currentStep++;
+            elapsedTime = 0f;
+
+            // Check stop condition
+            if (currentStep >= steps.Length)
+            {
+                StopSequence();
+            }
+        }
+    }
+
+    public void StartSequence()
+    {
+        if (steps == null || steps.Length == 0)
+        {
+            return;
+        }
+        currentStep = 0;
+        elapsedTime = 0f;
+        running = true;
+    }
+
+    public void StopSequence()
+    {
+        running = false;
+    }
+}

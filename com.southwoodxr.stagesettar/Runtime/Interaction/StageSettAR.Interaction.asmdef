@@ -1,0 +1,27 @@
+{
+    "name": "StageSettAR.Interaction",
+    "rootNamespace": "StageSettAR",
+    "references": [
+        "StageSettAR",
+        "Unity.XR.Interaction.Toolkit",
+        "Unity.XR.CoreUtils",
+        "Unity.XR.ARFoundation"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "STAGESETTAR_XRI"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.xr.interaction.toolkit",
+            "expression": "3.0.0",
+            "define": "STAGESETTAR_XRI"
+        }
+    ],
+    "noEngineReferences": false
+}

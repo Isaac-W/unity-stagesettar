@@ -9,13 +9,18 @@ using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 namespace StageSettAR.Editor
 {
     /// <summary>
-    /// Installs the Unity-registry XR packages the rig expects, so a project that was not created from the
-    /// Mixed Reality template still works. With the template everything is present and nothing is requested.
+    /// Installs the Unity-registry packages Quest passthrough MR needs (input, XR Management, OpenXR, Meta OpenXR,
+    /// AR Foundation, XR Interaction Toolkit, XR Hands) into a plain Unity 3D (URP) project, in one request so
+    /// Package Manager resolves them together. Packages already present are not requested again.
     /// Packages are added by name so Unity picks the version verified for this editor.
     /// </summary>
     public sealed class XrPackagesStep : ISetupStep, ISetupStepOptions
     {
+        public const string InputSystemId = "com.unity.inputsystem";
+        public const string ManagementId = "com.unity.xr.management";
         public const string ArFoundationId = "com.unity.xr.arfoundation";
+        public const string XriId = "com.unity.xr.interaction.toolkit";
+        public const string HandsId = "com.unity.xr.hands";
         public const string OpenXrId = "com.unity.xr.openxr";
         public const string MetaOpenXrId = "com.unity.xr.meta-openxr";
         public const string ArCoreId = "com.unity.xr.arcore";
@@ -24,9 +29,13 @@ namespace StageSettAR.Editor
         // Required packages and the oldest version that works (null: any version).
         static readonly (string id, Version min)[] k_required =
         {
-            (ArFoundationId, new Version(6, 0, 0)),
+            (InputSystemId, null),
+            (ManagementId, null),
             (OpenXrId, null),
             (MetaOpenXrId, new Version(2, 4, 0)),
+            (ArFoundationId, new Version(6, 0, 0)),
+            (XriId, new Version(3, 0, 0)),
+            (HandsId, null),
         };
 
         static bool s_dirty = true;
@@ -54,7 +63,7 @@ namespace StageSettAR.Editor
                 if (!s_versions.TryGetValue(id, out var version)) problems.Add(id + " (missing)");
                 else if (IsTooOld(version, min)) problems.Add($"{id} (found {version}, needs {min} or newer)");
             }
-            if (problems.Count == 0) { detail = "AR Foundation, OpenXR and Meta OpenXR are installed."; return SetupStatus.Done; }
+            if (problems.Count == 0) { detail = "Input System, XR Management, OpenXR, Meta OpenXR, AR Foundation, XR Interaction Toolkit and XR Hands are installed."; return SetupStatus.Done; }
 
             detail = "Needs: " + string.Join(", ", problems) + ". Needs an internet connection.";
             return SetupStatus.Needed;

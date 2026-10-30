@@ -6,23 +6,30 @@ The **map root** moves, never the XR Origin or the camera. Headset tracking stay
 
 ## Install
 
-1. Create the project from the Unity Hub **Mixed Reality** template (Unity 6000.3, URP). This is recommended: it already contains the XR packages the rig needs.
+1. Create a Unity **6000.3** project from the **Universal 3D** template (URP). No other template is needed: the Setup window installs the XR packages, imports the XR samples and configures the project itself.
 2. Package Manager ▸ **Add package from disk…** ▸ `package.json` of this folder (a git URL or tarball also works).
-3. The **StageSettAR Setup** window opens (reopen it any time from **Tools ▸ StageSettAR ▸ Setup…**). Click each enabled button, top to bottom. Unity recompiles after the package install; new steps then appear on their own.
-   - The first step, **XR packages**, checks for `com.unity.xr.arfoundation` (6.x), `com.unity.xr.openxr` and `com.unity.xr.meta-openxr` (2.4 or newer) and installs whatever is missing from the Unity registry, letting Unity pick the version verified for your editor. With the Mixed Reality template it shows as done straight away and downloads nothing. Without the template it needs an internet connection.
-   - Phones: the same step has two optional buttons, **Add ARCore (Android phones)** and **Add ARKit (iOS)**. They never block the step; press them only if you build for phones.
-4. **Tools ▸ StageSettAR ▸ Import STAR Map…**, then press Play: the headset looks for the room (see Localizing) and the map appears once it is found.
+3. The **StageSettAR Setup** window opens (reopen it any time from **Tools ▸ StageSettAR ▸ Setup…**). Click **Set up everything**: it runs every step that is still needed, top to bottom, and waits through the package installs, sample imports and recompiles in between. It needs an internet connection. Unity may ask to enable the new Input System and restart, or the XR project settings step may offer an editor restart for the same reason; restart, reopen the window and click **Set up everything** again, and it carries on where it stopped. It also stops, and says why, at a step that needs you (for example the Android Build Support module, which you add in Unity Hub). You can instead click each enabled button yourself, top to bottom; Unity recompiles after the installs and new steps then appear on their own.
+   - **XR packages**: installs what is missing from the Unity registry in one request, letting Unity pick the versions verified for your editor: Input System, XR Plug-in Management, OpenXR, Meta OpenXR (2.4 or newer), AR Foundation (6.x), XR Interaction Toolkit (3.x) and XR Hands. Phones: the step has two optional buttons, **Add ARCore (Android phones)** and **Add ARKit (iOS)**. They never block the step; press them only if you build for phones.
+   - **XR project settings**: configures the project for Quest passthrough: linear color space, the Input System as input handling, Android (Vulkan, IL2CPP, ARM64, minimum API level 32), XR Plug-in Management with OpenXR for Android and for Standalone (so Quest Link works), the OpenXR features (Quest support, hand tracking, Touch controllers and the Meta AR Foundation features, with camera image access on and the boundary hidden), and URP (HDR off, 4x MSAA, the AR background renderer features). The build target is not switched for you; a button offers Android.
+   - **XR sample assets**: imports the Package Manager samples the rig is built from: XR Hands **HandVisualizer** and XR Interaction Toolkit **Starter Assets** and **Hands Interaction Demo** (controller and hand prefabs, input actions).
+   - **Splat packages** and **Splat rendering (URP)**: see Import a map.
+   - **XR rig**: builds the StageSettAR Rig prefab from those samples (see below).
+   - **Scene template**: adds **File ▸ New Scene ▸ StageSettAR**.
+   - **Camera permission scene**: makes the scene that asks for camera access and puts it first in the build (see Scene setup).
+4. Open the scene you want to build in and choose **Tools ▸ StageSettAR ▸ Set Up Current Scene** (also a row in the Setup window; **Set up everything** leaves it out because it changes your open scene). It puts the rig in and the other cameras and XR rigs out, as described below.
+5. **Tools ▸ StageSettAR ▸ Import STAR Map…**, then press Play: the headset looks for the room (see Localizing) and the map appears once it is found.
 
 ### What the setup creates
 
-- **StageSettAR Rig** (`Assets/StageSettAR/StageSettAR Rig.prefab`): a variant of the Mixed Reality template's `MR Interaction Setup` with passthrough, hands and controllers. The tutorial objects (Goal Manager, Object Spawner, contact spawn triggers) are removed or switched off.
+- **StageSettAR Rig** (`Assets/StageSettAR/StageSettAR Rig.prefab`): built from the XR Interaction Toolkit's **Hands Interaction Demo** sample: its `XR Origin Hands (XR Rig)` (hands and controllers) stays a nested prefab inside the rig, so a sample update still flows in. Around it the rig adds an Input Action Manager, an XR Interaction Manager, an Event System with the XR UI input module, an AR Session, and, on the origin and camera, the passthrough camera and the plane and anchor managers. The demo's locomotion is switched off (below).
 - **No locomotion.** The user moves by walking. The locomotion objects stay in the hierarchy but are switched off, and the controllers can't switch them back on.
 - **Head collider.** A `Head` child of the camera carries a trigger collider tagged **Player** (layer Ignore Raycast) on a kinematic rigidbody. A trigger zone only needs `other.CompareTag("Player")`.
 - **Gaze source and screen effects.** The `Head` also carries a `GazeSource` (the one place that says where the user is looking), and a `Screen Effects` child of the camera holds a `Camera Fade`, a `Camera Circle Wipe` and a `Passthrough Fade`. A `Boundary Keeper` child keeps asking Quest to hide the boundary (needs `com.unity.xr.meta-openxr` 2.4 or newer). A `Localizing Screen` child is the panel that guides the user while the room is found (see Localizing). See "Toolkit" below.
-- **Editor User Model.** A blue stand-in body with an orange visor shows where the user is and which way they face, so you can place content in the Scene view. The user's own camera never sees it, and it is left out of builds (`EditorOnly` tag).
-- **Quest settings.** Camera image access is turned on so the localizer can read the camera. The Quest boundary is hidden while passthrough is on, so the whole room or site is usable. Students still need a clear, safe space.
-- **File ▸ New Scene ▸ StageSettAR** starts a scene with the rig, a light and a global volume. Post-processing is off on the XR camera, as in the template, so the volume does nothing until you enable post-processing.
+- **Editor character and floor tracking.** The tracking origin is set to Floor, and the Scene view camera sits 1.6 m above the origin (the XR Origin's Camera Y Offset and Camera Floor Offset are 1.6), so content is placed against a user of normal height. On a headset the real floor and eye height take over. A person model (`Models/character.fbx`, with the **Editor Character** component) stands under the camera with its eyes at the camera, so you can see where the user is and which way they face. It turns with the user's heading only, so looking up or down does not tip it over. The user's own camera never sees it, its transform is locked and it can't be clicked in the Scene view (it stays selectable in the Hierarchy), and it is left out of builds (`EditorOnly` tag). Scenes made earlier with the blue **Editor User Model** keep working.
+- **XR project settings.** The Setup step **XR project settings** (see Install) also turns camera image access on so the localizer can read the camera, and hides the Quest boundary while passthrough is on, so the whole room or site is usable. Students still need a clear, safe space.
+- **File ▸ New Scene ▸ StageSettAR** starts a scene with the rig and a light. Post-processing is off on the XR camera, so a global volume would do nothing and none is added; a URP scene that has one keeps it.
 - **Tools ▸ StageSettAR ▸ Rebuild XR Rig** recreates the prefab.
+- **Tools ▸ StageSettAR ▸ Set Up Current Scene** turns the scene you have open into a StageSettAR scene: it applies the XR project settings (and the splat renderer setup), asks before removing other XR rigs and cameras tagged MainCamera (Undo brings them back), adds the rig, and adds a light if there is none. Your scene is left modified but not saved. **GameObject ▸ StageSettAR ▸ XR Rig** adds just the rig. The same command is a row in the Setup window (it never opens the window by itself).
 
 No git is needed on the student machine. The splat packages are fetched without it: WebP through the OpenUPM registry (the setup adds a scoped registry to `Packages/manifest.json`), and UnitySplats as a zip from GitHub that is unpacked into `Packages/com.arloopa.unitysplats` (an embedded package). Until UnitySplats is present, the splat-related parts of this package are not compiled, so a fresh project opens without errors.
 
@@ -31,13 +38,13 @@ Advanced options (bottom of the Setup window):
 - **Use a local UnitySplats folder…**: for a fork or a clone you already have. Pick the folder that contains `package.json` (name `com.arloopa.unitysplats`); it is added to the manifest as a `file:` dependency instead of downloading.
 - **Keep downloaded UnitySplats out of version control** (default on): writes `Packages/com.arloopa.unitysplats/.gitignore` for git, and for Unity Version Control adds a marked `# StageSettAR begin` / `# StageSettAR end` block to the workspace's `ignore.conf` (only if that file already exists; it is never created). Turning it off removes both. Files that are already tracked are not untracked retroactively. A copy that contains its own `.git` is left alone. The setting is stored in `ProjectSettings/StageSettARSettings.asset`.
 
-Quest needs AR Foundation 6.x and `com.unity.xr.meta-openxr` (the Mixed Reality template includes them); `com.unity.ai.inference` is pulled in automatically.
+Quest needs AR Foundation 6.x and `com.unity.xr.meta-openxr` (the **XR packages** step installs them); `com.unity.ai.inference` is pulled in automatically.
 
 ## Import a map
 
-**Tools ▸ StageSettAR ▸ Import STAR Map…**, pick the exported zip. It creates a `StarMap` asset (model, landmarks, floor map), converts the splat, and builds a prefab: a root with a `StarLocalizer`, a `Splat` child, an empty `Content` child (put your virtual objects here; they live in the map frame), and, if the map has a floor image, a `Floor` quad (visible by default; switch it off or delete it if you do not want it, and re-importing will not bring it back). "Add to scene" instantiates it and wires an `ArFoundationCameraSource` if the scene has an `ARCameraManager`.
+**Tools ▸ StageSettAR ▸ Import STAR Map…**, pick the exported zip. It creates a `StarMap` asset (model, landmarks, floor map), converts the splat, and builds a prefab: a root with a `StarLocalizer`, a `Splat` child, an empty `Content` child (put your virtual objects here; they live in the map frame), and, if the map has a floor image, a `Floor` quad and an invisible `Floor Collider` the size of the room (so dropped and thrown objects land on the real floor; delete it if you do not want it). The splat and floor image are references for placing content: they are tagged `EditorOnly` (left out of builds) and get no splat effects; untag the splat and add effects yourself if you want it on device. The splat, floor image and floor collider are locked: their transforms are fixed to the map root (which the localizer moves into the room) and greyed out, and they can't be clicked in the Scene view, so clicks reach your content (they stay selectable in the Hierarchy and can be deleted). Every import is new: if the destination folder exists, the map goes to a new numbered folder and earlier imports are left untouched. "Add to scene" instantiates it and wires an `ArFoundationCameraSource` if the scene has an `ARCameraManager`.
 
-Splat rendering needs the Setup step **Splat rendering (URP)**. It checks every renderer of the pipeline asset in Graphics settings and of each quality level (the Mixed Reality template has one per level: High Fidelity, Balanced, Performant), so a headset or phone that uses a different quality level is covered too. **Configure** adds the package's splat feature (`StageSettARSplatURPFeature`) to each renderer and deactivates Gsplat's own `Gsplat URP Feature`, also if it was added by hand. Ours renders before opaque geometry and avoids a Vulkan problem seen on Quest, so the two must not both be active. A renderer where you switched our feature off is reported and left alone. Renderers that are read-only or inside a package cannot be changed; the step lists them, and you assign a renderer from `Assets/` in the quality level instead. The import window checks the Setup steps the splat depends on; while one is not done it shows what is missing with an **Open Setup** button and imports the map without the splat.
+Splat rendering needs the Setup step **Splat rendering (URP)**. It checks every renderer of the pipeline asset in Graphics settings and of each quality level (a URP project usually has one per quality level), so a headset or phone that uses a different quality level is covered too. **Configure** adds the package's splat feature (`StageSettARSplatURPFeature`) to each renderer and deactivates Gsplat's own `Gsplat URP Feature`, also if it was added by hand. Ours renders before opaque geometry and avoids a Vulkan problem seen on Quest, so the two must not both be active. A renderer where you switched our feature off is reported and left alone. Renderers that are read-only or inside a package cannot be changed; the step lists them, and you assign a renderer from `Assets/` in the quality level instead. The import window checks the Setup steps the splat depends on; while one is not done it shows what is missing with an **Open Setup** button and imports the map without the splat.
 
 ## Localizing
 
@@ -234,6 +241,43 @@ It starts by itself (**Play On Start**), or call `Play()` from another event suc
 - **Scene Switcher**: next / previous / by-name scene, restart or quit, with a Camera Fade first. Scenes must be in the build settings.
 - **Tag Along**, **Do On Angle**, **Path Follower**, **Video To Material** are the pieces the menu items are built from; each can be added on its own.
 
+### Simple Grab and Simple Gaze
+
+Two components for "the user can pick this up" and "the user looked at this". Each adds the XR interactable it needs by itself, so none of the XR Interaction Toolkit settings appear; one you added by hand is used as it is. Both go on an object with a (non-trigger) collider, and the scene needs the rig's interactors and an XR Interaction Manager (the StageSettAR Rig has both). They are under **Component > StageSettAR**, and share one interactable when used together.
+
+**Simple Grab** (needs a Rigidbody):
+
+- **Mode**: *Grabbing + Physics* lets go with the hand's velocity so the object can be thrown, and it keeps its Rigidbody's gravity setting (a floating object stays floating); *Grabbing Only* holds it rigidly with no throw; *No Grabbing* keeps the touch events but hands can't take hold.
+- **Grab From A Distance**: off (default), the user must reach out and take it in their hand; on, they can also pick it up by pointing a ray at it.
+- **On Touch Start / On Touch End**: a hand comes within reach (about 15 cm) of the object, and the last hand leaves. Pointing a ray at it from across the room, or looking at it, is not a touch.
+- **On Grab Start / On Grab End**: the user picks it up, and lets go.
+- `IsTouched` and `IsGrabbed` can be read from a script. Hands only poke an object that also has an XR Poke Filter.
+
+**Simple Gaze**:
+
+- **On Gaze Start / On Gaze End**: the user starts looking at it, and the last gaze moves off. It reacts to gaze only and never selects; hands are ignored unless the object also has a Simple Grab. `IsGazedAt` can be read from a script.
+- On a Quest 3 without eye tracking the gaze follows the head. For gaze that needs no interactor at all (the XR Device Simulator, say), use **On Gaze Action**.
+
+Disabling either component fires its End events first, so anything a Start event switched on is switched off again.
+
+### Helpers
+
+Small single-purpose scripts to wire up with UnityEvents, under **Component > StageSettAR > Helpers** (namespace `StageSettAR.Helpers`):
+
+- **Debug Message**: `Log(message)` prints to the Console, for testing events early.
+- **Face Player**: keeps a panel or sign turned toward the headset (the Main Camera; upright only by default). **Flip** is on by default, for TextMeshPro text, which reads backwards otherwise.
+- **Floater**: bobs up and down; `StartFloating()` / `StopFloating()`, e.g. stop it when the object is grabbed.
+- **Follow Target**: follows a Transform (the Main Camera for the player) at a distance, optionally staying at its starting height. Chain several for a conga line.
+- **Move To Target**: moves to a destination marker, `StartMoving()`, and fires **On Arrived**.
+- **Random Sound**: `PlayRandom()` plays one of several clips with a little pitch variation.
+- **Rotator**: spins around an axis at a set speed; `StartRotating()` / `StopRotating()`.
+- **Scene Changer**: `LoadScene()` loads the scene named in its **Scene Name** field, `LoadSceneByName(name)`, `LoadNextScene()`, `ReloadScene()`. Scenes must be in the build settings.
+- **Simple Spawner**: `Spawn()` copies a prefab at a point, up to a limit.
+
+### No-Code reference scripts
+
+**Tools > StageSettAR > No-Code > Add Reference Scripts** copies reference versions of On Trigger Action, Timed Action, Collide Action and Sequence Action (for students who didn't finish theirs) into `Assets/Scripts/NoCodeReference`. A component the project already defines is skipped and kept. **Remove Reference Scripts** deletes that folder first, so you can add your own versions without a duplicate class.
+
 
 ## Panoramic shells and reveals
 
@@ -253,6 +297,6 @@ For depth the bake temporarily swaps in capture versions of UnitySplats' shaders
 - `Splat Shell Reveal` fades the baked shells in or out, nearest first by default. Starts hidden.
 - `Splat Events` raises `onUploaded` and `onFirstRender`, handy for starting a reveal only once the splat is really on screen.
 
-Baking from the importer: tick **Bake panoramic shells** (needs the map added to the open scene). It runs the same bake as the menu, on the splat in your scene, so the shells belong to that scene object, not the prefab. Bake from where people will stand: see How to bake above.
+The importer does not bake shells: the map's splat is an editor-only localization reference. To show a splat with shells, untag it (or use a separate splat), select it and use the menu. Bake from where people will stand: see How to bake above.
 
 **Splat LOD (Gradient).** `Splat LOD (Gradient)` thins splats out with distance from a centre (a curve, with options to keep large or opaque splats longest). It works on the CPU through UnitySplats' active ranges, so it replaces the renderer's ordinary cutouts while active, and recomputes when you change a setting or move the centre. `Tools > StageSettAR > Splat Counts` shows uploaded/visible splat counts for the selected splat; the same panel is in the LOD inspector.

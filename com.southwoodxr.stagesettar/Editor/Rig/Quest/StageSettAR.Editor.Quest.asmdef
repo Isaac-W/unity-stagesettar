@@ -3,8 +3,14 @@
     "rootNamespace": "StageSettAR.Editor",
     "references": [
         "StageSettAR.Editor",
+        "Unity.XR.Management",
+        "Unity.XR.Management.Editor",
         "Unity.XR.OpenXR",
-        "Unity.XR.MetaOpenXR"
+        "Unity.XR.OpenXR.Editor",
+        "Unity.XR.MetaOpenXR",
+        "Unity.XR.ARFoundation",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.RenderPipelines.Core.Runtime"
     ],
     "includePlatforms": [
         "Editor"

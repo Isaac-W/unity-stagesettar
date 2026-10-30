@@ -1,0 +1,33 @@
+using UnityEngine;
+using UnityEngine.Events;
+
+[AddComponentMenu("No-Code/On Trigger Action")]
+public class OnTriggerAction : MonoBehaviour
+{
+    [Header("Trigger Settings")]
+    [Tooltip("Only objects with this tag activate the trigger. The Collider on THIS object must have Is Trigger checked.")]
+    public string triggerTagName = "MainCamera";
+
+    [Header("Events")]
+    [Tooltip("Invoked when the object enters the trigger.")]
+    public UnityEvent onEnter;
+
+    [Tooltip("Invoked when the object exits the trigger.")]
+    public UnityEvent onExit;
+
+    private void OnTriggerEnter(Collider other)
+    {
+        if (!string.IsNullOrEmpty(triggerTagName) && other.CompareTag(triggerTagName))
+        {
+            onEnter.Invoke();
+        }
+    }
+
+    private void OnTriggerExit(Collider other)
+    {
+        if (!string.IsNullOrEmpty(triggerTagName) && other.CompareTag(triggerTagName))
+        {
+            onExit.Invoke();
+        }
+    }
+}

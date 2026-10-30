@@ -1,0 +1,78 @@
+using UnityEngine;
+using UnityEngine.Events;
+
+[AddComponentMenu("No-Code/Timed Action")]
+public class TimedAction : MonoBehaviour
+{
+    [Header("Timer Settings")]
+    [Tooltip("Countdown time in seconds.")]
+    public float duration = 1f;
+
+    [Tooltip("If checked, the timer starts when the scene loads. Otherwise it waits for StartTimer() to be called.")]
+    public bool startOnAwake;
+
+    [Header("Repeat Settings")]
+    [Tooltip("If checked, the timer restarts after completing. (with optional count below)")]
+    public bool repeat;
+
+    [Tooltip("Total number of times the timer fires (2 = fires twice). 0 means repeat forever.")]
+    public int repeatCount;
+
+    [Header("Events")]
+    [Tooltip("Invoked each time the timer completes.")]
+    public UnityEvent onTimerComplete;
+
+    private float elapsedTime;
+    private bool running;
+    private int repeatsDone;
+
+    private void Awake()
+    {
+        if (startOnAwake)
+        {
+            StartTimer();
+        }
+    }
+
+    private void Update()
+    {
+        if (!running)
+        {
+            return;
+        }
+
+        elapsedTime += Time.deltaTime; // Need this to count the time
+
+        if (elapsedTime >= duration)
+        {
+            elapsedTime = 0f;
+            onTimerComplete.Invoke();
+
+            if (repeat)
+            {
+                repeatsDone++;
+                if (repeatCount > 0 && repeatsDone >= repeatCount)
+                {
+                    StopTimer();
+                }
+            }
+            else
+            {
+                StopTimer();
+            }
+        }
+    }
+
+    public void StartTimer()
+    {
+        elapsedTime = 0f;
+        repeatsDone = 0;
+        running = true;
+    }
+
+    public void StopTimer()
+    {
+        running = false;
+        elapsedTime = 0f;
+    }
+}
