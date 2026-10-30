@@ -485,8 +485,6 @@ namespace StageSettAR.Editor
             SetFloat(marker, "eyeHeight", EyeHeight);
             SetFloat(marker, "sideOffset", CharacterSideOffset);
             marker.Follow();
-            LockedObjects.Lock(character);
-            PrefabUtility.RecordPrefabInstancePropertyModifications(character.transform);
         }
 
         static GameObject LoadCharacterModel()

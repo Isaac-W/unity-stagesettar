@@ -149,10 +149,14 @@ namespace StageSettAR
         public CameraSource cameraSource;
         [Tooltip("The object that gets moved into place (map content and splat live under it). Defaults to this object.")]
         public Transform mapRoot;
+        [Tooltip("The child of the map root where your objects go. In the editor the rest of the map root (splat, floor) is locked; this object's children are not.")]
+        public Transform content;
         [Tooltip("Start looking for the room as soon as the scene starts. Turn off to call StartLocalization yourself.")]
         public bool autoStart = true;
         [Tooltip("Keep the map root's children inactive until the first localization, so nothing appears in the wrong place.")]
         public bool hideUntilLocalized = true;
+        [Tooltip("Also localize in the editor's Play mode. Off (default): in the editor the localizer does nothing, so the map, splat and your content stay where you placed them and the Localizing Screen stays hidden while you test with the XR Interaction Simulator. Device builds always localize.")]
+        public bool localizeInEditor;
 
         [Header("Phases")]
         [Tooltip("Finding the room: the map stays hidden until a few confident fixes agree, then it is placed and shown.")]
@@ -261,6 +265,12 @@ namespace StageSettAR
 
         void Reset() { mapRoot = transform; }
 
+        // There is no room to find in the editor (no passthrough camera), and testing content means seeing the map as
+        // authored, so Play mode in the editor leaves the localizer switched off unless asked otherwise.
+        bool SkippedInEditor => Application.isEditor && !localizeInEditor;
+
+        void Awake() { if (SkippedInEditor) enabled = false; }
+
         void Start() { if (autoStart) StartLocalization(); }
 
         // OnDisable stops the loop; carry on from where it was. A found alignment keeps being tracked rather than
@@ -299,6 +309,7 @@ namespace StageSettAR
         /// </summary>
         public void StartLocalization()
         {
+            if (SkippedInEditor) return;
             if (map == null || cameraSource == null)
             {
                 Debug.LogError("[StageSettAR] StarLocalizer needs a map and a camera source.", this);
@@ -794,7 +805,7 @@ namespace StageSettAR
             if (map == null || map.landmarksExport == null) return;
             Gizmos.matrix = Root.localToWorldMatrix;
             Gizmos.color = new Color(1f, 0.8f, 0.1f, 0.8f);
-            foreach (var p in map.LandmarksUnity) Gizmos.DrawSphere(p, 0.03f);
+            foreach (var p in map.LandmarksUnity) Gizmos.DrawSphere(p, 0.003f);
         }
     }
 }

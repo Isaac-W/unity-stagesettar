@@ -168,14 +168,14 @@ namespace StageSettAR.Editor
             EditorGUIUtility.PingObject(go);
         }
 
-        /// <summary>The object new content should go under: the map's Content, if there is a map in the scene.</summary>
+        /// <summary>The object new content should go under: the map's content folder, if there is a map in the scene.</summary>
         internal static Transform FindContentRoot()
         {
             var localizer = Object.FindFirstObjectByType<StarLocalizer>();
             if (localizer == null) return null;
             var mapRoot = localizer.mapRoot != null ? localizer.mapRoot : localizer.transform;
-            var content = mapRoot.Find("Content");
-            return content != null ? content : mapRoot;
+            // Never the map root itself: everything there but the content folder is locked.
+            return LockedObjects.ToolkitContent(localizer, mapRoot);
         }
 
         /// <summary>

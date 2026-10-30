@@ -10,11 +10,13 @@ namespace StageSettAR.Editor
     /// <summary>
     /// Imports the package samples the rig is built from (XR Hands "HandVisualizer", XRI "Starter Assets" and
     /// "Hands Interaction Demo": controllers, hands, input actions and presets), the same ones the Unity
-    /// Mixed Reality template ships. They are Package Manager samples, so a plain project has none of them.
+    /// Mixed Reality template ships, plus XRI's "XR Interaction Simulator" (a simulated headset and hands for
+    /// Play mode without a headset; the XR project settings step enables it). They are Package Manager samples,
+    /// so a plain project has none of them.
     /// </summary>
     /// <remarks>
     /// Lives in the ungated assembly and uses only Package Manager's sample API, so it needs no reference to
-    /// the XR packages. Importing can trigger a recompile; all three are imported in one run.
+    /// the XR packages. Importing can trigger a recompile; all of them are imported in one run.
     /// </remarks>
     public sealed class XrSamplesStep : ISetupStep
     {
@@ -24,13 +26,16 @@ namespace StageSettAR.Editor
             (XrPackagesStep.HandsId, "HandVisualizer"),
             (XrPackagesStep.XriId, "Starter Assets"),
             (XrPackagesStep.XriId, "Hands Interaction Demo"),
+            (XrPackagesStep.XriId, "XR Interaction Simulator"),
         };
 
         static SetupStatus s_status;
         static string s_detail = "";
         static double s_checked = double.NegativeInfinity;
 
-        public int Order => 8;
+        // Before the XR project settings step (Order 7): it points XRI's simulator settings
+        // at this sample's prefab, so the sample must be imported first. Needs only the XR packages (Order 5).
+        public int Order => 6;
         public string Title => "XR sample assets";
         public string ActionLabel => "Import";
 
@@ -87,7 +92,7 @@ namespace StageSettAR.Editor
 
             if (todo.Count > 0)
             {
-                detail = "Import " + string.Join(", ", todo) + " (controller and hand prefabs, input actions).";
+                detail = "Import " + string.Join(", ", todo) + " (controller and hand prefabs, input actions, XR Interaction Simulator).";
                 return SetupStatus.Needed;
             }
             if (unavailable.Count > 0)
@@ -95,7 +100,7 @@ namespace StageSettAR.Editor
                 detail = "The installed packages have no sample named " + string.Join(", ", unavailable) + ". Update them in Package Manager.";
                 return SetupStatus.Blocked;
             }
-            detail = "HandVisualizer, Starter Assets and Hands Interaction Demo are imported.";
+            detail = "HandVisualizer, Starter Assets, Hands Interaction Demo and XR Interaction Simulator are imported.";
             return SetupStatus.Done;
         }
 

@@ -3,6 +3,7 @@
     "rootNamespace": "StageSettAR.Editor",
     "references": [
         "StageSettAR",
+        "StageSettAR.Editor",
         "StageSettAR.UI",
         "Unity.TextMeshPro",
         "UnityEngine.UI"

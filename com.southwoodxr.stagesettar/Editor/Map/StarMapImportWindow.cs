@@ -139,6 +139,8 @@ namespace StageSettAR.Editor
                 m_hasSplat = zip.GetEntry("splat.spz") != null;
                 m_importSplat = m_hasSplat;
                 m_hasTopdown = zip.GetEntry("topdown.png") != null && zip.GetEntry("topdown.json") != null;
+                // With a splat to place content against, the floor image mostly gets in the way.
+                m_floorImage = m_hasTopdown && !m_hasSplat;
                 m_dest = "Assets/StarMaps/" + Sanitize(m_map.name);
             }
             catch (Exception e) { m_map = null; m_error = e.Message; }
@@ -343,7 +345,7 @@ namespace StageSettAR.Editor
         /// </remarks>
         static GameObject BuildPrefab(string path, StarMap map, GsplatAsset splat, Texture2D floorImage, bool floorCollider)
         {
-            var root = new GameObject("STAR Map " + map.displayName);
+            var root = new GameObject("StageSettAR: " + map.displayName);
             try
             {
                 var loc = root.AddComponent<StarLocalizer>();
@@ -359,10 +361,9 @@ namespace StageSettAR.Editor
                     var so = new SerializedObject(r);
                     so.FindProperty("GsplatAsset").objectReferenceValue = splat;
                     so.ApplyModifiedPropertiesWithoutUndo();
-                    LockedObjects.Lock(child);
                 }
 
-                Child(root, "Content");
+                loc.content = Child(root, ContentName).transform;
 
                 if (floorImage || floorCollider) BuildFloor(root, map, path, floorImage, floorCollider);
                 return PrefabUtility.SaveAsPrefabAsset(root, path);
@@ -390,7 +391,6 @@ namespace StageSettAR.Editor
                 floor.transform.localPosition = new Vector3(bounds.center.x, y + 0.005f, bounds.center.y);
                 floor.transform.localScale = new Vector3(bounds.width, bounds.height, 1);
                 floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), image);
-                LockedObjects.Lock(floor);
             }
             if (collider)
             {
@@ -399,7 +399,6 @@ namespace StageSettAR.Editor
                 var ground = Child(root, "Floor Collider");
                 ground.transform.localPosition = new Vector3(bounds.center.x, y - thickness * 0.5f, bounds.center.y);
                 ground.AddComponent<BoxCollider>().size = new Vector3(bounds.width, thickness, bounds.height);
-                LockedObjects.Lock(ground);
             }
         }
 
@@ -419,6 +418,9 @@ namespace StageSettAR.Editor
             var bounds = Rect.MinMaxRect(Pct(p => p.x, 0.02f), Pct(p => p.z, 0.02f), Pct(p => p.x, 0.98f), Pct(p => p.z, 0.98f));
             return (bounds, Pct(p => p.y, 0.02f));
         }
+
+        // Named for students: the one place under the map that is theirs (LockedObjects locks the rest).
+        const string ContentName = "[Your GameObjects go here]";
 
         static GameObject Child(GameObject root, string name)
         {

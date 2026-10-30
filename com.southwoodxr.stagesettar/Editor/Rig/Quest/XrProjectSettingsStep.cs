@@ -24,7 +24,8 @@ namespace StageSettAR.Editor
     /// Configures a plain Unity 3D (URP) project the way the Mixed Reality template is set up for Meta Quest
     /// passthrough: Player settings, XR Plug-in Management (OpenXR for Android and for Standalone, so Quest Link
     /// works), the OpenXR features (Quest support, hands, controller profiles, the AR Foundation features with
-    /// passthrough camera images and the boundary suppressed) and the URP assets and renderers.
+    /// passthrough camera images and the boundary suppressed), the URP assets and renderers, and XRI's XR Interaction
+    /// Simulator (simulated headset and hands when pressing Play without a headset).
     /// </summary>
     /// <remarks>
     /// Evaluating and fixing share one pass (<see cref="Pass"/>), so what is reported missing is exactly what Run
@@ -32,6 +33,7 @@ namespace StageSettAR.Editor
     /// packages (XR Hands, the Meta features) and lets the step say "not found" instead of failing to compile.
     /// Afterwards OpenXR's own public project-validation fixes are applied. The active build target is not
     /// switched (slow); a button offers it. Changing the input handler needs an editor restart, which is offered.
+    /// The simulator settings are skipped until the sample's prefab is imported (the samples step, Order 6, runs first).
     /// </remarks>
     public sealed class XrProjectSettingsStep : ISetupStep, ISetupStepOptions
     {
@@ -176,6 +178,7 @@ namespace StageSettAR.Editor
             Management(p);
             OpenXr(p);
             Urp(p);
+            Simulator(p);
         }
 
         // ---- Player ----
@@ -352,6 +355,75 @@ namespace StageSettAR.Editor
                     catch (Exception e) { Debug.LogException(e); }
                 }
             }
+        }
+
+        // ---- XR Interaction Simulator ----
+
+        // XRI's settings class is internal and this assembly has no XRI reference, so it is reached by name. It is a
+        // ScriptableSettings asset (Assets/XRI/Settings/Resources/XRDeviceSimulatorSettings.asset) read at runtime by
+        // XRInteractionSimulatorLoader, the same asset the XRI project settings page edits.
+        const string k_simulatorSettingsType = "UnityEngine.XR.Interaction.Toolkit.Inputs.Simulation.XRDeviceSimulatorSettings, Unity.XR.Interaction.Toolkit";
+        const string k_simulatorPrefabName = "XR Interaction Simulator";
+
+        static void Simulator(Pass p)
+        {
+            // Nothing to point the settings at until the sample is imported.
+            var prefab = FindSimulatorPrefab();
+            var type = Type.GetType(k_simulatorSettingsType);
+            if (prefab == null || type == null) return;
+
+            var settings = LoadSimulatorSettings(type);
+            if (settings != null && new SerializedObject(settings).FindProperty("m_SimulatorPrefab") == null)
+            {
+                p.Stuck.Add("XR Interaction Simulator: XRI's settings have no m_SimulatorPrefab field; enable it in Project Settings > XR Plug-in Management > XR Interaction Toolkit");
+                return;
+            }
+
+            p.Need("XR Interaction Simulator in Play mode", settings != null && SimulatorConfigured(settings, prefab), () =>
+            {
+                // Instance creates the asset when missing (in edit mode); its defaults would leave the simulator off.
+                settings ??= type.GetProperty("Instance", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.FlattenHierarchy)
+                    ?.GetValue(null) as ScriptableObject;
+                if (settings == null || !EditorUtility.IsPersistent(settings)) throw new InvalidOperationException("XRI's simulator settings asset could not be created.");
+
+                var so = new SerializedObject(settings);
+                // Instantiate automatically, only in the editor (not in builds), the new simulator rather than the classic Device Simulator.
+                so.FindProperty("m_AutomaticallyInstantiateSimulatorPrefab").boolValue = true;
+                so.FindProperty("m_AutomaticallyInstantiateInEditorOnly").boolValue = true;
+                so.FindProperty("m_UseClassic").boolValue = false;
+                so.FindProperty("m_SimulatorPrefab").objectReferenceValue = prefab;
+                so.ApplyModifiedPropertiesWithoutUndo();
+                EditorUtility.SetDirty(settings);
+            });
+        }
+
+        static bool SimulatorConfigured(ScriptableObject settings, GameObject prefab)
+        {
+            var so = new SerializedObject(settings);
+            return so.FindProperty("m_AutomaticallyInstantiateSimulatorPrefab").boolValue
+                && so.FindProperty("m_AutomaticallyInstantiateInEditorOnly").boolValue
+                && !so.FindProperty("m_UseClassic").boolValue
+                && so.FindProperty("m_SimulatorPrefab").objectReferenceValue == prefab;
+        }
+
+        static ScriptableObject LoadSimulatorSettings(Type type)
+        {
+            var guids = AssetDatabase.FindAssets("t:" + type.Name);
+            return guids.Length > 0 ? AssetDatabase.LoadAssetAtPath(AssetDatabase.GUIDToAssetPath(guids[0]), type) as ScriptableObject : null;
+        }
+
+        // The sample's prefab, by name like the rig builder finds its origin prefab; the classic "XR Device Simulator" prefab has another name.
+        static GameObject FindSimulatorPrefab()
+        {
+            if (!AssetDatabase.IsValidFolder("Assets/Samples")) return null;
+            foreach (var guid in AssetDatabase.FindAssets(k_simulatorPrefabName + " t:Prefab", new[] { "Assets/Samples" }))
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (Path.GetFileNameWithoutExtension(path) != k_simulatorPrefabName) continue;
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (prefab != null && prefab.GetComponent("XRInteractionSimulator") != null) return prefab;
+            }
+            return null;
         }
 
         // ---- URP ----
