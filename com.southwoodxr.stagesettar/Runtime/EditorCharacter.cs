@@ -24,7 +24,10 @@ namespace StageSettAR
         [SerializeField] Camera followCamera;
 
         [Tooltip("Height of the camera above the character's feet, in metres (the model's eye height).")]
-        [SerializeField, Min(0.1f)] float eyeHeight = 1.6f;
+        [SerializeField, Min(0.1f)] float eyeHeight = 1.65f;
+
+        [Tooltip("Sideways shift of the model, in metres along its own right, so its eyes (not its nose) line up with the camera.")]
+        [SerializeField] float sideOffset = 0.02f;
 
         Renderer[] _renderers;
 
@@ -60,7 +63,8 @@ namespace StageSettAR
             if (forward.sqrMagnitude < 0.01f) forward = Vector3.ProjectOnPlane(cam.up, Vector3.up) * (cam.forward.y > 0f ? -1f : 1f);
             if (forward.sqrMagnitude < 1e-6f) return; // exactly vertical and rolled: keep the last heading
             var yaw = Quaternion.LookRotation(forward.normalized, Vector3.up);
-            var position = cam.position + Vector3.down * (eyeHeight * Mathf.Abs(cam.lossyScale.y));
+            var scale = Mathf.Abs(cam.lossyScale.y);
+            var position = cam.position + Vector3.down * (eyeHeight * scale) + yaw * Vector3.right * (sideOffset * scale);
 
             // Only written when it differs: in edit mode an unchanged write could still dirty the scene.
             if ((transform.position - position).sqrMagnitude > 1e-8f || Quaternion.Angle(transform.rotation, yaw) > 0.01f)

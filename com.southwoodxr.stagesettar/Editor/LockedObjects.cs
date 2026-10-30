@@ -21,6 +21,11 @@ namespace StageSettAR.Editor
     /// instance of the model prefab, and Unity does not keep a HideFlags change on a prefab instance, so its
     /// Transform comes back editable. EditorCharacter re-poses it every frame, which keeps it in place anyway.
     /// </para>
+    /// <para>
+    /// The rig's Localizing Screen is only kept out of Scene-view clicks (a panel floating in front of the
+    /// camera would win them); its transform stays editable. Its type lives in the optional UI assembly, so it
+    /// is looked up by name.
+    /// </para>
     /// </remarks>
     [InitializeOnLoad]
     public static class LockedObjects
@@ -43,6 +48,12 @@ namespace StageSettAR.Editor
         }
 
         static bool IsLocked(Transform t) => (t.hideFlags & HideFlags.NotEditable) != 0;
+
+        static readonly System.Type s_localizingScreen = System.Type.GetType("StageSettAR.LocalizingScreen, StageSettAR.UI");
+
+        static bool IsUnpickable(Transform t) =>
+            IsLocked(t) || t.TryGetComponent(out EditorCharacter _) ||
+            (s_localizingScreen != null && t.GetComponent(s_localizingScreen) != null);
 
         // Many hierarchy changes arrive in a burst; one scan after them is enough.
         static void Schedule()
@@ -76,7 +87,7 @@ namespace StageSettAR.Editor
         static void DisableIn(SceneVisibilityManager visibility, GameObject root)
         {
             foreach (var t in root.GetComponentsInChildren<Transform>(true))
-                if ((IsLocked(t) || t.TryGetComponent(out EditorCharacter _)) && !visibility.IsPickingDisabled(t.gameObject, true))
+                if (IsUnpickable(t) && !visibility.IsPickingDisabled(t.gameObject, true))
                     visibility.DisablePicking(t.gameObject, true);
         }
     }

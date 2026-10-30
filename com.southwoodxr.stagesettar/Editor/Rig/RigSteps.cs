@@ -46,7 +46,8 @@ namespace StageSettAR.Editor
         public const string SamplesMissing = "Import the XR samples first (Setup window: XR samples)";
 
         // Eye height of the editor character and of the camera in the Scene view (metres).
-        const float EyeHeight = 1.6f;
+        const float EyeHeight = 1.65f;
+        const float CharacterSideOffset = 0.02f;
 
         const string OriginPrefabName = "XR Origin Hands (XR Rig)";
         const string InputActionsName = "XRI Default Input Actions";
@@ -471,7 +472,7 @@ namespace StageSettAR.Editor
             var character = (GameObject)PrefabUtility.InstantiatePrefab(model, cam.transform);
             character.name = "Editor Character";
             character.tag = "EditorOnly";
-            character.transform.localPosition = new Vector3(0f, -EyeHeight, 0f);
+            character.transform.localPosition = new Vector3(CharacterSideOffset, -EyeHeight, 0f);
             character.transform.localRotation = Quaternion.identity;
             foreach (var collider in character.GetComponentsInChildren<Collider>(true))
             {
@@ -481,6 +482,8 @@ namespace StageSettAR.Editor
 
             var marker = character.AddComponent<EditorCharacter>();
             SetReference(marker, "followCamera", cam);
+            SetFloat(marker, "eyeHeight", EyeHeight);
+            SetFloat(marker, "sideOffset", CharacterSideOffset);
             marker.Follow();
             LockedObjects.Lock(character);
             PrefabUtility.RecordPrefabInstancePropertyModifications(character.transform);
