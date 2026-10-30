@@ -24,10 +24,10 @@ namespace StageSettAR
         [SerializeField] Camera followCamera;
 
         [Tooltip("Height of the camera above the character's feet, in metres (the model's eye height).")]
-        [SerializeField, Min(0.1f)] float eyeHeight = 1.65f;
+        [SerializeField, Min(0.1f)] float eyeHeight = 1.68f;
 
         [Tooltip("Sideways shift of the model, in metres along its own right, so its eyes (not its nose) line up with the camera.")]
-        [SerializeField] float sideOffset = 0.02f;
+        [SerializeField] float sideOffset = 0.03f;
 
         Renderer[] _renderers;
 

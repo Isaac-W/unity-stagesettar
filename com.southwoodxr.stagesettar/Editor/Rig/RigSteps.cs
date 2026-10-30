@@ -46,8 +46,8 @@ namespace StageSettAR.Editor
         public const string SamplesMissing = "Import the XR samples first (Setup window: XR samples)";
 
         // Eye height of the editor character and of the camera in the Scene view (metres).
-        const float EyeHeight = 1.65f;
-        const float CharacterSideOffset = 0.02f;
+        const float EyeHeight = 1.68f;
+        const float CharacterSideOffset = 0.03f;
 
         const string OriginPrefabName = "XR Origin Hands (XR Rig)";
         const string InputActionsName = "XRI Default Input Actions";
