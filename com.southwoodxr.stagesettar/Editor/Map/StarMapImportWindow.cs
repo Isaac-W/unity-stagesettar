@@ -196,10 +196,8 @@ namespace StageSettAR.Editor
                 throw new InvalidDataException($"landmarks.json has {landmarks.Length} landmarks, map.json says {map.landmarks}");
 
             var name = Sanitize(map.name);
-            // Every import is a new environment: an existing folder is never written into, so maps imported
-            // earlier (and anything authored under them) are left exactly as they are.
+            // Importing the same map again updates it in place (see BuildPrefab for what is kept).
             var dest = m_dest.TrimEnd('/');
-            if (AssetDatabase.IsValidFolder(dest)) dest = AssetDatabase.GenerateUniqueAssetPath(dest);
             EditorUtility.DisplayProgressBar("Importing STAR map", "Writing files", 0.1f);
 
             var modelPath = Write(dest + "/model.onnx", files["model.onnx"]);
@@ -257,7 +255,7 @@ namespace StageSettAR.Editor
             Debug.Log($"[StageSettAR] Imported '{map.name}' ({landmarks.Length} landmarks{(splat ? ", splat" : "")}) to {dest}", starMap);
             if (m_addToScene)
             {
-                AddToScene(prefab);
+                AddToScene(prefab, map.name);
             }
         }
 
@@ -335,43 +333,67 @@ namespace StageSettAR.Editor
             return sm;
         }
 
-        /// <summary>Creates the map's prefab. Always a new one: <see cref="Import"/> writes each import to its own folder.</summary>
+        /// <summary>
+        /// Creates the map's prefab, or on re-import brings the existing one up to date in place.
+        /// </summary>
         /// <remarks>
+        /// <para>
+        /// Re-importing only touches what the importer makes: the localizer's map, and the Splat, Floor and Floor
+        /// Collider children (updated in place, so scene objects built on them, such as baked shells, keep working;
+        /// added or removed per the importer's toggles). The localizer's other settings, the root's name, the content
+        /// folder and everything in it, and any other child you added are left as they are.
+        /// </para>
+        /// <para>
         /// The splat is a reference for placing content and is tagged EditorOnly, so builds leave it out; a developer
         /// who wants it on device untags it and adds effects themselves. The Floor is the floor image (EditorOnly too)
-        /// and the Floor Collider a room-sized collider that ships. The splat and floor objects are locked
-        /// (<see cref="LockedObjects"/>): fixed to the map root, which the localizer moves into the room, and never
-        /// picked in the Scene view, so clicks reach the Content placed over them.
+        /// and the Floor Collider a room-sized collider that ships. Everything under the map root but the content
+        /// folder's children is locked in the editor (<see cref="LockedObjects"/>).
+        /// </para>
         /// </remarks>
         static GameObject BuildPrefab(string path, StarMap map, GsplatAsset splat, Texture2D floorImage, bool floorCollider)
         {
-            var root = new GameObject("StageSettAR: " + map.displayName);
+            var exists = File.Exists(path);
+            var root = exists ? PrefabUtility.LoadPrefabContents(path) : new GameObject(Path.GetFileNameWithoutExtension(path));
             try
             {
-                var loc = root.AddComponent<StarLocalizer>();
+                var loc = root.GetComponent<StarLocalizer>() ?? root.AddComponent<StarLocalizer>();
                 loc.map = map;
-                loc.mapRoot = root.transform;
+                if (loc.mapRoot == null) loc.mapRoot = root.transform;
 
+                var splatChild = Generated(root, "Splat", typeof(GsplatRenderer));
                 if (splat)
                 {
-                    var child = Child(root, "Splat");
-                    child.tag = "EditorOnly";
-                    var r = child.AddComponent<GsplatRenderer>();
+                    splatChild ??= Child(root, "Splat");
+                    splatChild.tag = "EditorOnly";
+                    var r = splatChild.GetComponent<GsplatRenderer>() ?? splatChild.AddComponent<GsplatRenderer>();
                     // Through SerializedObject so GsplatRenderer.OnValidate records the asset GUID (reimport refresh).
                     var so = new SerializedObject(r);
                     so.FindProperty("GsplatAsset").objectReferenceValue = splat;
                     so.ApplyModifiedPropertiesWithoutUndo();
                 }
+                else if (splatChild) UnityEngine.Object.DestroyImmediate(splatChild);
 
-                loc.content = Child(root, ContentName).transform;
+                // Maps imported before the content field existed have a child named Content.
+                if (loc.content == null) loc.content = LockedObjects.ToolkitContent(loc, root.transform);
+                if (loc.content == null) loc.content = Child(root, ContentName).transform;
 
-                if (floorImage || floorCollider) BuildFloor(root, map, path, floorImage, floorCollider);
+                BuildFloor(root, map, path, floorImage, floorCollider);
                 return PrefabUtility.SaveAsPrefabAsset(root, path);
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(root);
+                if (exists) PrefabUtility.UnloadPrefabContents(root);
+                else UnityEngine.Object.DestroyImmediate(root);
             }
+        }
+
+        // A direct child the importer made: its name and the component that marks it, so a child of yours that only
+        // happens to share the name is never taken for it.
+        static GameObject Generated(GameObject root, string name, Type marker)
+        {
+            foreach (Transform child in root.transform)
+                if (child.name == name && child.GetComponent(marker) != null) return child.gameObject;
+            return null;
         }
 
         // Two objects over the same rectangle of the room's floor: the image, a reference picture tagged EditorOnly,
@@ -379,27 +401,41 @@ namespace StageSettAR.Editor
         static void BuildFloor(GameObject root, StarMap map, string path, Texture2D image, bool collider)
         {
             var (bounds, y) = FloorExtent(map);
+
+            var floor = Generated(root, "Floor", typeof(MeshRenderer));
             if (image)
             {
-                var floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                floor.name = "Floor";
+                if (!floor)
+                {
+                    floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    floor.name = "Floor";
+                    UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
+                    floor.transform.SetParent(root.transform, false);
+                }
                 floor.tag = "EditorOnly";
-                UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
-                floor.transform.SetParent(root.transform, false);
                 // Quad lying flat: local y -> +z, so uv v follows Unity z, matching the PNG orientation.
                 floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
                 floor.transform.localPosition = new Vector3(bounds.center.x, y + 0.005f, bounds.center.y);
                 floor.transform.localScale = new Vector3(bounds.width, bounds.height, 1);
                 floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), image);
             }
+            else if (floor) UnityEngine.Object.DestroyImmediate(floor);
+
+            var ground = Generated(root, "Floor Collider", typeof(BoxCollider));
             if (collider)
             {
                 // A thin box whose top is the floor plane.
                 const float thickness = 0.1f;
-                var ground = Child(root, "Floor Collider");
-                ground.transform.localPosition = new Vector3(bounds.center.x, y - thickness * 0.5f, bounds.center.y);
-                ground.AddComponent<BoxCollider>().size = new Vector3(bounds.width, thickness, bounds.height);
+                if (!ground)
+                {
+                    ground = Child(root, "Floor Collider");
+                    ground.AddComponent<BoxCollider>();
+                }
+                ground.transform.SetLocalPositionAndRotation(new Vector3(bounds.center.x, y - thickness * 0.5f, bounds.center.y), Quaternion.identity);
+                ground.transform.localScale = Vector3.one;
+                ground.GetComponent<BoxCollider>().size = new Vector3(bounds.width, thickness, bounds.height);
             }
+            else if (ground) UnityEngine.Object.DestroyImmediate(ground);
         }
 
         // The floor image's rectangle and height when the export has one. Otherwise from the landmarks: their
@@ -445,10 +481,23 @@ namespace StageSettAR.Editor
             return mat;
         }
 
-        static GameObject AddToScene(GameObject prefab)
+        // The open scene's instance of the map, reused on re-import (a second one would localize twice). It is named
+        // here because Unity names the prefab asset's root after its file, and a file name cannot hold the colon.
+        static GameObject AddToScene(GameObject prefab, string mapName)
         {
-            var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
-            Undo.RegisterCreatedObjectUndo(go, "Add STAR Map");
+            GameObject go = null;
+            foreach (var loc0 in FindObjectsByType<StarLocalizer>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                var instanceRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(loc0.gameObject);
+                if (instanceRoot != null && PrefabUtility.GetCorrespondingObjectFromSource(instanceRoot) == prefab) { go = instanceRoot; break; }
+            }
+            if (go == null)
+            {
+                go = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+                Undo.RegisterCreatedObjectUndo(go, "Add STAR Map");
+            }
+            else Undo.RecordObject(go, "Rename STAR Map");
+            go.name = "StageSettAR: " + mapName;
             var loc = go.GetComponent<StarLocalizer>();
 
             var mgrType = Type.GetType("UnityEngine.XR.ARFoundation.ARCameraManager, Unity.XR.ARFoundation");

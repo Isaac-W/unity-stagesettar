@@ -55,13 +55,13 @@ namespace StageSettAR
         public bool playOnAwake;
 
         [Tooltip("Raised when the background has become fully solid.")]
-        public UnityEvent onFadedToVirtual;
+        public UnityEvent onFadedToVirtual = new UnityEvent();
 
         [Tooltip("Raised when the background has become fully transparent (Passthrough fully visible).")]
-        public UnityEvent onFadedToPassthrough;
+        public UnityEvent onFadedToPassthrough = new UnityEvent();
 
         [Tooltip("Raised when either fade ends.")]
-        public UnityEvent onComplete;
+        public UnityEvent onComplete = new UnityEvent();
 
         Coroutine _running;
 

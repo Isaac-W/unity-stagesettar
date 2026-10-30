@@ -33,8 +33,8 @@ namespace StageSettAR
         [Tooltip("Draw the zone in the Scene view. Gizmos never show in the headset.")]
         public bool showGizmo = true;
 
-        public UnityEvent onEnter;
-        public UnityEvent onExit;
+        public UnityEvent onEnter = new UnityEvent();
+        public UnityEvent onExit = new UnityEvent();
 
         readonly HashSet<Collider> _inside = new();
         readonly List<Collider> _scratch = new();

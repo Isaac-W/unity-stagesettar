@@ -10,10 +10,10 @@ public class OnTriggerAction : MonoBehaviour
 
     [Header("Events")]
     [Tooltip("Invoked when the object enters the trigger.")]
-    public UnityEvent onEnter;
+    public UnityEvent onEnter = new UnityEvent();
 
     [Tooltip("Invoked when the object exits the trigger.")]
-    public UnityEvent onExit;
+    public UnityEvent onExit = new UnityEvent();
 
     private void OnTriggerEnter(Collider other)
     {

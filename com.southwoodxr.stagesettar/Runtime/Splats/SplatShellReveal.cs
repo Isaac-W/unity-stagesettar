@@ -65,7 +65,7 @@ namespace StageSettAR
         public bool PlayOnAwake = false;
 
         [Tooltip("Fired when an animated Show or Hide finishes (not for Complete or Rewind).")]
-        public UnityEvent onComplete;
+        public UnityEvent onComplete = new UnityEvent();
 
         static readonly int k_tint = Shader.PropertyToID("_Tint");
 

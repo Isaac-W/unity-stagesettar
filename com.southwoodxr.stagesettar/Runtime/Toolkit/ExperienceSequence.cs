@@ -65,7 +65,7 @@ namespace StageSettAR
             public GameObject target;
 
             [Tooltip("What to do once the wait is over.")]
-            public UnityEvent then;
+            public UnityEvent then = new UnityEvent();
         }
 
         [Tooltip("The steps, top to bottom.")]
@@ -81,10 +81,10 @@ namespace StageSettAR
         public bool useUnscaledTime;
 
         [Tooltip("Raised when a step begins waiting. The index is its position in the list.")]
-        public UnityEvent<int> onStepStarted;
+        public UnityEvent<int> onStepStarted = new UnityEvent<int>();
 
         [Tooltip("Raised after the last step has run.")]
-        public UnityEvent onFinished;
+        public UnityEvent onFinished = new UnityEvent();
 
         int _index = -1;
         float _waited;

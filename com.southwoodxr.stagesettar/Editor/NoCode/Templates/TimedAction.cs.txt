@@ -20,7 +20,7 @@ public class TimedAction : MonoBehaviour
 
     [Header("Events")]
     [Tooltip("Invoked each time the timer completes.")]
-    public UnityEvent onTimerComplete;
+    public UnityEvent onTimerComplete = new UnityEvent();
 
     private float elapsedTime;
     private bool running;

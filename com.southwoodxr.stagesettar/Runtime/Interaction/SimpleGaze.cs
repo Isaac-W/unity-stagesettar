@@ -29,9 +29,9 @@ namespace StageSettAR
     public sealed class SimpleGaze : MonoBehaviour
     {
         [Tooltip("The user has just started looking at this.")]
-        public UnityEvent onGazeStart;
+        public UnityEvent onGazeStart = new UnityEvent();
         [Tooltip("The last gaze has moved off this.")]
-        public UnityEvent onGazeEnd;
+        public UnityEvent onGazeEnd = new UnityEvent();
 
         InteractableHost _host;
         bool _gazing;

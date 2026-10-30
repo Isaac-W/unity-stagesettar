@@ -10,7 +10,7 @@ public class CollideAction : MonoBehaviour
 
     [Header("Events")]
     [Tooltip("Invoked when an object with the matching tag collides with this object.")]
-    public UnityEvent onCollision;
+    public UnityEvent onCollision = new UnityEvent();
 
     private void OnCollisionEnter(Collision collision)
     {

@@ -28,7 +28,7 @@ namespace StageSettAR
         [SerializeField, Min(0f)] float fadeSeconds = 0.5f;
 
         [Tooltip("Invoked immediately when a switch is triggered, before the delay and fade.")]
-        [SerializeField] UnityEvent onSwitchTriggered;
+        [SerializeField] UnityEvent onSwitchTriggered = new UnityEvent();
 
         bool _triggered;
 

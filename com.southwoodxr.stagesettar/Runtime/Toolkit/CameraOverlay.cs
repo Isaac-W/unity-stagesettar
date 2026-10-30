@@ -63,13 +63,13 @@ namespace StageSettAR
         public Shader overlayShader;
 
         [Tooltip("Raised when the view has become fully covered.")]
-        public UnityEvent onCovered;
+        public UnityEvent onCovered = new UnityEvent();
 
         [Tooltip("Raised when the view has become fully clear.")]
-        public UnityEvent onCleared;
+        public UnityEvent onCleared = new UnityEvent();
 
         [Tooltip("Raised when either of the above happens.")]
-        public UnityEvent onComplete;
+        public UnityEvent onComplete = new UnityEvent();
 
         // The quad, its renderer and its material. Built once, on demand.
         private Transform quad;

@@ -73,13 +73,13 @@ namespace StageSettAR
         public Blending alphaBlending = Blending.Auto;
 
         [Tooltip("Raised when the fade in reaches fully visible.")]
-        public UnityEvent onFadedIn;
+        public UnityEvent onFadedIn = new UnityEvent();
 
         [Tooltip("Raised when the fade out reaches fully invisible.")]
-        public UnityEvent onFadedOut;
+        public UnityEvent onFadedOut = new UnityEvent();
 
         [Tooltip("Raised when either fade ends.")]
-        public UnityEvent onComplete;
+        public UnityEvent onComplete = new UnityEvent();
 
         // Tried in order. The first one a material actually has is the one driven.
         static readonly int[] k_colourProperties =

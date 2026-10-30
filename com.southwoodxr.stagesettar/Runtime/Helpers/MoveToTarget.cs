@@ -19,7 +19,7 @@ namespace StageSettAR.Helpers
         public bool moveOnStart = false;
 
         [Tooltip("Fired once when the object arrives.")]
-        public UnityEvent onArrived;
+        public UnityEvent onArrived = new UnityEvent();
 
         private bool isMoving;
 

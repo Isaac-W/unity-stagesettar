@@ -36,8 +36,8 @@ namespace StageSettAR
         [SerializeField, Range(0f, 180f)] float offAngle = 60f;
 
         [Header("Events")]
-        public UnityEvent onAngleEntered;
-        public UnityEvent onAngleExited;
+        public UnityEvent onAngleEntered = new UnityEvent();
+        public UnityEvent onAngleExited = new UnityEvent();
 
         [Header("Debug")]
         [SerializeField] bool showGizmos = true;

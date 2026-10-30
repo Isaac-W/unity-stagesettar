@@ -54,13 +54,13 @@ namespace StageSettAR
         [SerializeField] bool grabFromDistance;
 
         [Tooltip("A hand has just come within reach of this object.")]
-        public UnityEvent onTouchStart;
+        public UnityEvent onTouchStart = new UnityEvent();
         [Tooltip("The last hand has moved away from this object.")]
-        public UnityEvent onTouchEnd;
+        public UnityEvent onTouchEnd = new UnityEvent();
         [Tooltip("The user has just picked this up.")]
-        public UnityEvent onGrabStart;
+        public UnityEvent onGrabStart = new UnityEvent();
         [Tooltip("The user has let go of this.")]
-        public UnityEvent onGrabEnd;
+        public UnityEvent onGrabEnd = new UnityEvent();
 
         InteractableHost _host;
         bool _touching;

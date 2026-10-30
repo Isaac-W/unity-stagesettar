@@ -28,7 +28,7 @@ namespace StageSettAR
         [Tooltip("Ignore Time.timeScale.")]
         public bool useUnscaledTime;
 
-        public UnityEvent onTimerComplete;
+        public UnityEvent onTimerComplete = new UnityEvent();
 
         float _elapsed;
         int _completedCycles;

@@ -69,8 +69,8 @@ namespace StageSettAR
         [Tooltip("Draw the target in the Scene view, and the gaze line in play mode (green when it is hitting).")]
         public bool showGizmos = true;
 
-        public UnityEvent onEnter;
-        public UnityEvent onExit;
+        public UnityEvent onEnter = new UnityEvent();
+        public UnityEvent onExit = new UnityEvent();
 
         bool _gazedAt;
         float _heldFor;

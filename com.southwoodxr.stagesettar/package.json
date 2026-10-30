@@ -9,6 +9,13 @@
     "com.unity.render-pipelines.universal": "17.3.0"
   },
   "keywords": ["localization", "relocalization", "ar", "star", "gaussian-splatting"],
+  "samples": [
+    {
+      "displayName": "Helper Zoo",
+      "description": "One self-running, labelled station per helper script (Rotator, Floater, Face Player, Follow Target, Move To Target, Random Sound, Simple Spawner, Debug Message, Scene Changer). Open the scene and press Play; run Tools > StageSettAR > Set Up Current Scene to swap its plain camera for the XR rig.",
+      "path": "Samples~/Helper Zoo"
+    }
+  ],
   "author": {
     "name": "SouthwoodXR"
   }

@@ -53,7 +53,7 @@ namespace StageSettAR
 
         [Space]
         [Tooltip("Fired when an animated Show or Hide finishes (not for Complete or Rewind).")]
-        public UnityEvent onComplete;
+        public UnityEvent onComplete = new UnityEvent();
 
         /// <summary>
         /// The renderer's own downscale factor, captured before this component first writes to it.

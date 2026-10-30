@@ -27,10 +27,10 @@ namespace StageSettAR
         public GsplatRenderer Renderer;
 
         [Tooltip("Every splat is resident on the GPU.")]
-        public UnityEvent onUploaded;
+        public UnityEvent onUploaded = new UnityEvent();
 
         [Tooltip("The splats have been drawn at least once, so they are on screen rather than merely loaded. Hang a reveal on this.")]
-        public UnityEvent onFirstRender;
+        public UnityEvent onFirstRender = new UnityEvent();
 
         public bool IsUploaded { get; private set; }
         public bool HasRendered { get; private set; }
