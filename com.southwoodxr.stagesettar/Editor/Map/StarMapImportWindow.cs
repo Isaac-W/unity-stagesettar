@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using Gsplat;
@@ -43,7 +44,7 @@ namespace StageSettAR.Editor
 
         string m_zip, m_mapText, m_dest;
         MapDto m_map;
-        bool m_hasSplat, m_hasHoldout, m_importSplat = true, m_addToScene = true;
+        bool m_hasSplat, m_hasHoldout, m_hasTopdown, m_importSplat = true, m_addToScene = true, m_floorImage = true, m_floorCollider = true;
         Gsplat.CompressionMode m_compression = Gsplat.CompressionMode.Spark;
         string m_error;
 
@@ -101,6 +102,16 @@ namespace StageSettAR.Editor
                 if (splatOk) m_importSplat = importSplat;
                 m_compression = (Gsplat.CompressionMode)EditorGUILayout.EnumPopup("Splat compression", m_compression);
             }
+            using (new EditorGUI.DisabledScope(!m_hasTopdown))
+            {
+                var floorImage = EditorGUILayout.Toggle(new GUIContent("Floor image",
+                    "Shows the map's top-down image on the Floor, in the editor only, to help place content. Needs a floor image in the export."),
+                    m_floorImage && m_hasTopdown);
+                if (m_hasTopdown) m_floorImage = floorImage;
+            }
+            m_floorCollider = EditorGUILayout.Toggle(new GUIContent("Floor collider",
+                "An invisible collider on the Floor, the size of the room, so dropped and thrown objects land on the real floor. Kept in builds."),
+                m_floorCollider);
             m_addToScene = EditorGUILayout.Toggle("Add to open scene", m_addToScene);
 
             if (GUILayout.Button("Import", GUILayout.Height(28)))
@@ -127,6 +138,7 @@ namespace StageSettAR.Editor
                 m_hasHoldout = m_map.holdout != null && m_map.holdout.frames > 0 && m_mapText.Contains("\"holdout\"");
                 m_hasSplat = zip.GetEntry("splat.spz") != null;
                 m_importSplat = m_hasSplat;
+                m_hasTopdown = zip.GetEntry("topdown.png") != null && zip.GetEntry("topdown.json") != null;
                 m_dest = "Assets/StarMaps/" + Sanitize(m_map.name);
             }
             catch (Exception e) { m_map = null; m_error = e.Message; }
@@ -238,7 +250,7 @@ namespace StageSettAR.Editor
 
             EditorUtility.DisplayProgressBar("Importing STAR map", "Creating assets", 0.8f);
             var starMap = CreateOrUpdateMap(dest + "/" + name + ".asset", map, landmarks, model, topdown, td);
-            var prefab = BuildPrefab(dest + "/" + name + ".prefab", name, starMap, splat, topdown, td);
+            var prefab = BuildPrefab(dest + "/" + name + ".prefab", starMap, splat, m_floorImage ? topdown : null, m_floorCollider);
 
             Debug.Log($"[StageSettAR] Imported '{map.name}' ({landmarks.Length} landmarks{(splat ? ", splat" : "")}) to {dest}", starMap);
             if (m_addToScene)
@@ -323,12 +335,13 @@ namespace StageSettAR.Editor
 
         /// <summary>Creates the map's prefab. Always a new one: <see cref="Import"/> writes each import to its own folder.</summary>
         /// <remarks>
-        /// The splat and floor image are references for placing content and are tagged EditorOnly, so builds leave
-        /// them out; a developer who wants the splat on device untags it and adds effects themselves. They and the
-        /// floor collider are locked (<see cref="LockedObjects"/>): fixed to the map root, which the localizer moves
-        /// into the room, and never picked in the Scene view, so clicks reach the Content placed over them.
+        /// The splat is a reference for placing content and is tagged EditorOnly, so builds leave it out; a developer
+        /// who wants it on device untags it and adds effects themselves. The Floor holds the floor image (editor-only
+        /// picture), the room-sized collider (kept in builds), or both. The splat and Floor are locked
+        /// (<see cref="LockedObjects"/>): fixed to the map root, which the localizer moves into the room, and never
+        /// picked in the Scene view, so clicks reach the Content placed over them.
         /// </remarks>
-        static GameObject BuildPrefab(string path, string name, StarMap map, GsplatAsset splat, Texture2D topdown, TopdownDto td)
+        static GameObject BuildPrefab(string path, StarMap map, GsplatAsset splat, Texture2D floorImage, bool floorCollider)
         {
             var root = new GameObject("STAR Map " + map.displayName);
             try
@@ -351,35 +364,63 @@ namespace StageSettAR.Editor
 
                 Child(root, "Content");
 
-                if (topdown)
-                {
-                    var b = map.topdownBounds;
-                    var floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                    floor.name = "Floor";
-                    floor.tag = "EditorOnly";
-                    UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
-                    floor.transform.SetParent(root.transform, false);
-                    // Quad lying flat: local y -> +z, so uv v follows Unity z, matching the PNG orientation.
-                    floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
-                    floor.transform.localPosition = new Vector3(b.center.x, map.topdownY + 0.005f, b.center.y);
-                    floor.transform.localScale = new Vector3(b.width, b.height, 1);
-                    floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), topdown);
-                    LockedObjects.Lock(floor);
-
-                    // Invisible ground the size of the room, so dropped and thrown objects land on the real
-                    // floor. Kept in builds; delete it if the experience does not want it.
-                    const float thickness = 0.1f;
-                    var ground = Child(root, "Floor Collider");
-                    ground.transform.localPosition = new Vector3(b.center.x, map.topdownY - thickness * 0.5f, b.center.y);
-                    ground.AddComponent<BoxCollider>().size = new Vector3(b.width, thickness, b.height);
-                    LockedObjects.Lock(ground);
-                }
+                if (floorImage || floorCollider) BuildFloor(root, map, path, floorImage, floorCollider);
                 return PrefabUtility.SaveAsPrefabAsset(root, path);
             }
             finally
             {
                 UnityEngine.Object.DestroyImmediate(root);
             }
+        }
+
+        // A flat rectangle over the room's floor. With the image it is a quad (local y -> +z, so uv v follows Unity z,
+        // matching the PNG orientation); the collider is a thin box under the same plane. Image only: the whole object
+        // is EditorOnly. Image and collider: only the picture is (EditorOnlyVisual), the collider ships.
+        static void BuildFloor(GameObject root, StarMap map, string path, Texture2D image, bool collider)
+        {
+            var (bounds, y) = FloorExtent(map);
+            GameObject floor;
+            if (image)
+            {
+                floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
+                floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), image);
+            }
+            else floor = new GameObject();
+            floor.name = "Floor";
+            floor.transform.SetParent(root.transform, false);
+            floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
+            floor.transform.localPosition = new Vector3(bounds.center.x, y + 0.005f, bounds.center.y);
+            floor.transform.localScale = new Vector3(bounds.width, bounds.height, 1);
+
+            if (collider)
+            {
+                // Local +z points down here (rotated 90 about x); scale z is 1, so this is metres below the plane.
+                const float thickness = 0.1f;
+                var box = floor.AddComponent<BoxCollider>();
+                box.size = new Vector3(1, 1, thickness);
+                box.center = new Vector3(0, 0, thickness * 0.5f);
+                if (image) floor.AddComponent<EditorOnlyVisual>();
+            }
+            else floor.tag = "EditorOnly";
+            LockedObjects.Lock(floor);
+        }
+
+        // The floor image's rectangle and height when the export has one. Otherwise from the landmarks: their
+        // horizontal spread, trimmed of strays, and a low percentile of their height, since the lowest features
+        // seen in a room are on or near the floor.
+        static (Rect bounds, float y) FloorExtent(StarMap map)
+        {
+            if (map.topdown) return (map.topdownBounds, map.topdownY);
+            var pts = map.LandmarksUnity;
+            if (pts == null || pts.Length == 0) return (new Rect(-2.5f, -2.5f, 5f, 5f), 0f);
+            float Pct(Func<Vector3, float> axis, float q)
+            {
+                var v = pts.Select(axis).OrderBy(f => f).ToArray();
+                return v[Mathf.Clamp(Mathf.RoundToInt(q * (v.Length - 1)), 0, v.Length - 1)];
+            }
+            var bounds = Rect.MinMaxRect(Pct(p => p.x, 0.02f), Pct(p => p.z, 0.02f), Pct(p => p.x, 0.98f), Pct(p => p.z, 0.98f));
+            return (bounds, Pct(p => p.y, 0.02f));
         }
 
         static GameObject Child(GameObject root, string name)
