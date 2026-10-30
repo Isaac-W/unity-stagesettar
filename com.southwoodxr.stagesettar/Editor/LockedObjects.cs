@@ -16,6 +16,11 @@ namespace StageSettAR.Editor
     /// off it. Scene-view picking is per editor session (Scene Visibility), not saved, so it is re-applied to
     /// every such object whenever a scene or prefab opens and, throttled to one scan per burst, whenever the
     /// hierarchy changes. Locked objects stay selectable in the Hierarchy and can be deleted.
+    /// <para>
+    /// The rig's character is also recognised by its <see cref="EditorCharacter"/> component: it is a nested
+    /// instance of the model prefab, and Unity does not keep a HideFlags change on a prefab instance, so its
+    /// Transform comes back editable. EditorCharacter re-poses it every frame, which keeps it in place anyway.
+    /// </para>
     /// </remarks>
     [InitializeOnLoad]
     public static class LockedObjects
@@ -71,7 +76,7 @@ namespace StageSettAR.Editor
         static void DisableIn(SceneVisibilityManager visibility, GameObject root)
         {
             foreach (var t in root.GetComponentsInChildren<Transform>(true))
-                if (IsLocked(t) && !visibility.IsPickingDisabled(t.gameObject, true))
+                if ((IsLocked(t) || t.TryGetComponent(out EditorCharacter _)) && !visibility.IsPickingDisabled(t.gameObject, true))
                     visibility.DisablePicking(t.gameObject, true);
         }
     }

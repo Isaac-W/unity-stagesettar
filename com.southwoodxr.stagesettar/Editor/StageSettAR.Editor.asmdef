@@ -1,7 +1,9 @@
 {
     "name": "StageSettAR.Editor",
     "rootNamespace": "StageSettAR.Editor",
-    "references": [],
+    "references": [
+        "StageSettAR"
+    ],
     "includePlatforms": [
         "Editor"
     ],
