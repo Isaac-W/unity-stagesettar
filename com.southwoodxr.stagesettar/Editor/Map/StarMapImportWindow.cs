@@ -105,12 +105,12 @@ namespace StageSettAR.Editor
             using (new EditorGUI.DisabledScope(!m_hasTopdown))
             {
                 var floorImage = EditorGUILayout.Toggle(new GUIContent("Floor image",
-                    "Shows the map's top-down image on the Floor, in the editor only, to help place content. Needs a floor image in the export."),
+                    "A Floor quad showing the map's top-down image, in the editor only (EditorOnly), to help place content. Needs a floor image in the export."),
                     m_floorImage && m_hasTopdown);
                 if (m_hasTopdown) m_floorImage = floorImage;
             }
             m_floorCollider = EditorGUILayout.Toggle(new GUIContent("Floor collider",
-                "An invisible collider on the Floor, the size of the room, so dropped and thrown objects land on the real floor. Kept in builds."),
+                "A separate Floor Collider object, the size of the room, so dropped and thrown objects land on the real floor. Kept in builds."),
                 m_floorCollider);
             m_addToScene = EditorGUILayout.Toggle("Add to open scene", m_addToScene);
 
@@ -336,8 +336,8 @@ namespace StageSettAR.Editor
         /// <summary>Creates the map's prefab. Always a new one: <see cref="Import"/> writes each import to its own folder.</summary>
         /// <remarks>
         /// The splat is a reference for placing content and is tagged EditorOnly, so builds leave it out; a developer
-        /// who wants it on device untags it and adds effects themselves. The Floor holds the floor image (editor-only
-        /// picture), the room-sized collider (kept in builds), or both. The splat and Floor are locked
+        /// who wants it on device untags it and adds effects themselves. The Floor is the floor image (EditorOnly too)
+        /// and the Floor Collider a room-sized collider that ships. The splat and floor objects are locked
         /// (<see cref="LockedObjects"/>): fixed to the map root, which the localizer moves into the room, and never
         /// picked in the Scene view, so clicks reach the Content placed over them.
         /// </remarks>
@@ -373,37 +373,34 @@ namespace StageSettAR.Editor
             }
         }
 
-        // A flat rectangle over the room's floor. With the image it is a quad (local y -> +z, so uv v follows Unity z,
-        // matching the PNG orientation); the collider is a thin box under the same plane. Image only: the whole object
-        // is EditorOnly. Image and collider: only the picture is (EditorOnlyVisual), the collider ships.
+        // Two objects over the same rectangle of the room's floor: the image, a reference picture tagged EditorOnly,
+        // and the collider, which ships. Separate because the EditorOnly tag removes a whole object.
         static void BuildFloor(GameObject root, StarMap map, string path, Texture2D image, bool collider)
         {
             var (bounds, y) = FloorExtent(map);
-            GameObject floor;
             if (image)
             {
-                floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                var floor = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                floor.name = "Floor";
+                floor.tag = "EditorOnly";
                 UnityEngine.Object.DestroyImmediate(floor.GetComponent<Collider>());
+                floor.transform.SetParent(root.transform, false);
+                // Quad lying flat: local y -> +z, so uv v follows Unity z, matching the PNG orientation.
+                floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
+                floor.transform.localPosition = new Vector3(bounds.center.x, y + 0.005f, bounds.center.y);
+                floor.transform.localScale = new Vector3(bounds.width, bounds.height, 1);
                 floor.GetComponent<MeshRenderer>().sharedMaterial = FloorMaterial(path.Replace(".prefab", "_Floor.mat"), image);
+                LockedObjects.Lock(floor);
             }
-            else floor = new GameObject();
-            floor.name = "Floor";
-            floor.transform.SetParent(root.transform, false);
-            floor.transform.localRotation = Quaternion.Euler(90, 0, 0);
-            floor.transform.localPosition = new Vector3(bounds.center.x, y + 0.005f, bounds.center.y);
-            floor.transform.localScale = new Vector3(bounds.width, bounds.height, 1);
-
             if (collider)
             {
-                // Local +z points down here (rotated 90 about x); scale z is 1, so this is metres below the plane.
+                // A thin box whose top is the floor plane.
                 const float thickness = 0.1f;
-                var box = floor.AddComponent<BoxCollider>();
-                box.size = new Vector3(1, 1, thickness);
-                box.center = new Vector3(0, 0, thickness * 0.5f);
-                if (image) floor.AddComponent<EditorOnlyVisual>();
+                var ground = Child(root, "Floor Collider");
+                ground.transform.localPosition = new Vector3(bounds.center.x, y - thickness * 0.5f, bounds.center.y);
+                ground.AddComponent<BoxCollider>().size = new Vector3(bounds.width, thickness, bounds.height);
+                LockedObjects.Lock(ground);
             }
-            else floor.tag = "EditorOnly";
-            LockedObjects.Lock(floor);
         }
 
         // The floor image's rectangle and height when the export has one. Otherwise from the landmarks: their
