@@ -38,7 +38,7 @@ namespace StageSettAR.Editor
     public static class RigBuilder
     {
         public const string Folder = "Assets/StageSettAR";
-        public const string RigPath = Folder + "/StageSettAR Rig.prefab";
+        public const string RigPath = Folder + "/XR Interaction Setup.prefab";
         public const string ScenePath = Folder + "/StageSettAR Scene.unity";
         public const string TemplatePath = Folder + "/StageSettAR Scene.scenetemplate";
 
@@ -105,12 +105,12 @@ namespace StageSettAR.Editor
         public static bool RigExists => File.Exists(RigPath);
         public static bool TemplateExists => File.Exists(TemplatePath);
 
-        [MenuItem("Tools/StageSettAR/Rebuild XR Rig")]
+        [MenuItem("Tools/StageSettAR/Rebuild XR Rig", false, 2)]
         static void RebuildMenu()
         {
             if (!SamplesReady) { TellSamplesMissing(); return; }
             if (RigExists && !EditorUtility.DisplayDialog("Rebuild XR rig",
-                    "This replaces 'StageSettAR Rig.prefab' with a fresh copy. Changes you made to the prefab itself will be lost (scene instances keep working).",
+                    "This replaces 'XR Interaction Setup.prefab' with a fresh copy. Changes you made to the prefab itself will be lost (scene instances keep working).",
                     "Rebuild", "Cancel"))
                 return;
             BuildRig();
@@ -140,7 +140,7 @@ namespace StageSettAR.Editor
             var scene = EditorSceneManager.NewPreviewScene();
             try
             {
-                var rig = new GameObject("StageSettAR Rig");
+                var rig = new GameObject("XR Interaction Setup");
                 SceneManager.MoveGameObjectToScene(rig, scene);
                 AddPlumbing(rig, inputActions);
 
@@ -586,7 +586,7 @@ namespace StageSettAR.Editor
             {
                 var rig = (GameObject)PrefabUtility.InstantiatePrefab(rigPrefab, scene);
                 RecordCreated(rig, record);
-                added?.Add("StageSettAR Rig");
+                added?.Add("XR Interaction Setup");
             }
 
             // The light of the URP 3D template's default scene. No global volume: the rig renders without
@@ -668,7 +668,7 @@ namespace StageSettAR.Editor
         {
             if (RigBuilder.RigExists)
             {
-                detail = "Assets/StageSettAR/StageSettAR Rig.prefab is ready. Tools > StageSettAR > Rebuild XR Rig replaces it.";
+                detail = "Assets/StageSettAR/XR Interaction Setup.prefab is ready. Tools > StageSettAR > Rebuild XR Rig replaces it.";
                 return SetupStatus.Done;
             }
             if (!RigBuilder.SamplesReady)

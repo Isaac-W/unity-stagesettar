@@ -56,7 +56,7 @@ namespace StageSettAR.Editor
     /// <summary>Uploaded / visible / after-cutout counts for the selected splat.</summary>
     public sealed class SplatCountsWindow : EditorWindow
     {
-        [MenuItem("Tools/StageSettAR/Splat Counts")]
+        [MenuItem("Tools/StageSettAR/Splat Counts", false, 61)]
         static void Open() => GetWindow<SplatCountsWindow>("Splat Counts");
 
         void OnInspectorUpdate() => Repaint();

@@ -13,7 +13,7 @@ The **map root** moves, never the XR Origin or the camera. Headset tracking stay
    - **XR project settings**: configures the project for Quest passthrough: linear color space, the Input System as input handling, Android (Vulkan, IL2CPP, ARM64, minimum API level 32), XR Plug-in Management with OpenXR for Android and for Standalone (so Quest Link works), the OpenXR features (Quest support, hand tracking, Touch controllers and the Meta AR Foundation features, with camera image access on and the boundary hidden), and URP (HDR off, 4x MSAA, the AR background renderer features). The build target is not switched for you; a button offers Android.
    - **XR sample assets**: imports the Package Manager samples the rig is built from: XR Hands **HandVisualizer** and XR Interaction Toolkit **Starter Assets** and **Hands Interaction Demo** (controller and hand prefabs, input actions).
    - **Splat packages** and **Splat rendering (URP)**: see Import a map.
-   - **XR rig**: builds the StageSettAR Rig prefab from those samples (see below).
+   - **XR rig**: builds the XR Interaction Setup prefab from those samples (see below).
    - **Scene template**: adds **File ▸ New Scene ▸ StageSettAR**.
    - **Camera permission scene**: makes the scene that asks for camera access and puts it first in the build (see Scene setup).
 4. Open the scene you want to build in and choose **Tools ▸ StageSettAR ▸ Set Up Current Scene** (also a row in the Setup window; **Set up everything** leaves it out because it changes your open scene). It puts the rig in and the other cameras and XR rigs out, as described below.
@@ -21,7 +21,7 @@ The **map root** moves, never the XR Origin or the camera. Headset tracking stay
 
 ### What the setup creates
 
-- **StageSettAR Rig** (`Assets/StageSettAR/StageSettAR Rig.prefab`): built from the XR Interaction Toolkit's **Hands Interaction Demo** sample: its `XR Origin Hands (XR Rig)` (hands and controllers) stays a nested prefab inside the rig, so a sample update still flows in. Around it the rig adds an Input Action Manager, an XR Interaction Manager, an Event System with the XR UI input module, an AR Session, and, on the origin and camera, the passthrough camera and the plane and anchor managers. The demo's locomotion is switched off (below).
+- **XR Interaction Setup** (`Assets/StageSettAR/XR Interaction Setup.prefab`): built from the XR Interaction Toolkit's **Hands Interaction Demo** sample: its `XR Origin Hands (XR Rig)` (hands and controllers) stays a nested prefab inside the rig, so a sample update still flows in. Around it the rig adds an Input Action Manager, an XR Interaction Manager, an Event System with the XR UI input module, an AR Session, and, on the origin and camera, the passthrough camera and the plane and anchor managers. The demo's locomotion is switched off (below).
 - **No locomotion.** The user moves by walking. The locomotion objects stay in the hierarchy but are switched off, and the controllers can't switch them back on.
 - **Head collider.** A `Head` child of the camera carries a trigger collider tagged **Player** (layer Ignore Raycast) on a kinematic rigidbody. A trigger zone only needs `other.CompareTag("Player")`.
 - **Gaze source and screen effects.** The `Head` also carries a `GazeSource` (the one place that says where the user is looking), and a `Screen Effects` child of the camera holds a `Camera Fade`, a `Camera Circle Wipe` and a `Passthrough Fade`. A `Boundary Keeper` child keeps asking Quest to hide the boundary (needs `com.unity.xr.meta-openxr` 2.4 or newer). A `Localizing Screen` child is the panel that guides the user while the room is found (see Localizing). See "Toolkit" below.
@@ -35,8 +35,7 @@ No git is needed on the student machine. The splat packages are fetched without 
 
 Advanced options (bottom of the Setup window):
 
-- **Use a local UnitySplats folder…**: for a fork or a clone you already have. Pick the folder that contains `package.json` (name `com.arloopa.unitysplats`); it is added to the manifest as a `file:` dependency instead of downloading.
-- **Keep downloaded UnitySplats out of version control** (default on): writes `Packages/com.arloopa.unitysplats/.gitignore` for git, and for Unity Version Control adds a marked `# StageSettAR begin` / `# StageSettAR end` block to the workspace's `ignore.conf` (only if that file already exists; it is never created). Turning it off removes both. Files that are already tracked are not untracked retroactively. A copy that contains its own `.git` is left alone. The setting is stored in `ProjectSettings/StageSettARSettings.asset`.
+- **Keep downloaded UnitySplats out of version control** (default on): writes `Packages/com.arloopa.unitysplats/.gitignore` for git, and for Unity Version Control adds a marked `# StageSettAR begin` / `# StageSettAR end` block to the workspace's `ignore.conf` (only if that file already exists; it is never created, because Unity writes its default one only when none exists, and a warning is logged instead). Turning it off removes both. Files that are already tracked are not untracked retroactively. A copy that contains its own `.git` is left alone. The setting is stored in `ProjectSettings/StageSettARSettings.asset`.
 
 Quest needs AR Foundation 6.x and `com.unity.xr.meta-openxr` (the **XR packages** step installs them); `com.unity.ai.inference` is pulled in automatically.
 
@@ -54,7 +53,7 @@ When the scene has a map, the user sees a small panel float a little below eye l
 - **Lost tracking, look around**, if the device lost its tracking (or the headset was taken off). The panel stays until tracking is back.
 - **Couldn't find this room. Are you in the right place?**, if it gives up. It tries again by itself after a few seconds.
 
-The panel is the `Localizing Screen` object under the StageSettAR Rig (or add the component **StageSettAR ▸ Localizing Screen** to your own world-space canvas). It finds the `STAR Localizer` by itself and stays hidden in scenes without a map. The words, the **Retry After Seconds** and the timings are plain fields on it.
+The panel is the `Localizing Screen` object under the XR Interaction Setup (or add the component **StageSettAR ▸ Localizing Screen** to your own world-space canvas). It finds the `STAR Localizer` by itself and stays hidden in scenes without a map. The words, the **Retry After Seconds** and the timings are plain fields on it.
 
 **Hooking up an intro.** The map stays hidden until the room is found (until `startup.fixesToShow` fixes agree, so it appears within a second or two; it may move a little while it is refined). Select the object with the `STAR Localizer` and, under **On First Localized**, press `+`, drag in what should happen, and pick its method. For example drag in a `Camera Fade` and pick `Clear`, an `Object Fade` and pick `FadeIn`, or a `Splat Reveal` and pick `Play`. **On First Localized** runs only once, the first time the room is found. **On Settled** runs when enough of the room has been seen for the placement to be trusted and the Late phase begins. For a map that appears at once, do nothing.
 
@@ -211,7 +210,7 @@ TextMeshPro needs its essentials once: if the panel text is blank, use **Window 
 
 ### Videos
 
-**Tools > StageSettAR > Add Video...** (also **GameObject > StageSettAR > Video Panel...**): choose a video file, or drop one on the window, or pick a video already in the project. The file is copied to `Assets/StageSettAR/Videos` and set to transcode to H.264 on Android (Quest), capped at 2560 px wide. Then a screen with the video's exact proportions is added to the scene, with spatial sound. Choose when it plays: **When Gazed At** (pauses on looking away), **When Nearby** (a play zone of the radius you pick), **On Start**, or **Manual** (call `Play` on the Video Player from an event). You can also right-click a video clip in the Project window and choose **StageSettAR > Create Video Panel**. The first Android build transcodes, which can take a while for long videos.
+**Tools > StageSettAR > Add Video…** (also **GameObject > StageSettAR > Video Panel...**): choose a video file, or drop one on the window, or pick a video already in the project. The file is copied to `Assets/StageSettAR/Videos` and set to transcode to H.264 on Android (Quest), capped at 2560 px wide. Then a screen with the video's exact proportions is added to the scene, with spatial sound. Choose when it plays: **When Gazed At** (pauses on looking away), **When Nearby** (a play zone of the radius you pick), **On Start**, or **Manual** (call `Play` on the Video Player from an event). You can also right-click a video clip in the Project window and choose **StageSettAR > Create Video Panel**. The first Android build transcodes, which can take a while for long videos.
 
 ### The Player tag and trigger zones
 
@@ -243,7 +242,7 @@ It starts by itself (**Play On Start**), or call `Play()` from another event suc
 
 ### Simple Grab and Simple Gaze
 
-Two components for "the user can pick this up" and "the user looked at this". Each adds the XR interactable it needs by itself, so none of the XR Interaction Toolkit settings appear; one you added by hand is used as it is. Both go on an object with a (non-trigger) collider, and the scene needs the rig's interactors and an XR Interaction Manager (the StageSettAR Rig has both). They are under **Component > StageSettAR**, and share one interactable when used together.
+Two components for "the user can pick this up" and "the user looked at this". Each adds the XR interactable it needs by itself, so none of the XR Interaction Toolkit settings appear; one you added by hand is used as it is. Both go on an object with a (non-trigger) collider, and the scene needs the rig's interactors and an XR Interaction Manager (the XR Interaction Setup has both). They are under **Component > StageSettAR**, and share one interactable when used together.
 
 **Simple Grab** (needs a Rigidbody):
 

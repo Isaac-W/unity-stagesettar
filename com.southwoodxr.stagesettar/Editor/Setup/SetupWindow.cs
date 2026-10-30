@@ -19,7 +19,7 @@ namespace StageSettAR.Editor
         static readonly HashSet<Type> s_logged = new();
         Vector2 m_scroll;
 
-        [MenuItem("Tools/StageSettAR/Setup…")]
+        [MenuItem("Tools/StageSettAR/Setup…", false, 0)]
         public static void Open() => GetWindow<SetupWindow>("StageSettAR Setup");
 
         [InitializeOnLoadMethod]
@@ -84,8 +84,6 @@ namespace StageSettAR.Editor
             EditorGUILayout.LabelField("Advanced", EditorStyles.boldLabel);
             var ignore = EditorGUILayout.ToggleLeft("Keep downloaded UnitySplats out of version control", StageSettARSettings.instance.IgnoreSplatsInVcs);
             if (ignore != StageSettARSettings.instance.IgnoreSplatsInVcs) StageSettARSettings.instance.IgnoreSplatsInVcs = ignore;
-            if (GUILayout.Button("Use a local UnitySplats folder instead of downloading…", GUILayout.Height(22)))
-                SplatDependencyStep.UseLocalFolder();
         }
 
         static void DrawRunAll()

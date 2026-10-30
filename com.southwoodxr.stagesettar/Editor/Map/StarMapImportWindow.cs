@@ -48,7 +48,7 @@ namespace StageSettAR.Editor
         Gsplat.CompressionMode m_compression = Gsplat.CompressionMode.Spark;
         string m_error;
 
-        [MenuItem("Tools/StageSettAR/Import STAR Map…")]
+        [MenuItem("Tools/StageSettAR/Import STAR Map…", false, 20)]
         static void Open() => GetWindow<StarMapImportWindow>("Import STAR Map");
 
         // The Setup steps a splat import depends on. Fixing them is the Setup window's job, not the importer's.

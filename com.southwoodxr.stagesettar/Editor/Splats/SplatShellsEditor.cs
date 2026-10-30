@@ -34,7 +34,7 @@ namespace StageSettAR.Editor
 
         const string k_defaultRoot = "Assets/StageSettAR/Shells";
 
-        [MenuItem("Tools/StageSettAR/Bake Panoramic Shells", false, 120)]
+        [MenuItem("Tools/StageSettAR/Bake Panoramic Shells", false, 60)]
         static void BakeSelected()
         {
             var renderer = SelectedRenderer();

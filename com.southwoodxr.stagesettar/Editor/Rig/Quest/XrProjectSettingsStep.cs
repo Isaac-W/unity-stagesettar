@@ -239,11 +239,15 @@ namespace StageSettAR.Editor
             }
         }
 
+        // The value of XRGeneralSettings' k_SettingsKey, which is obsolete from XR Plug-in Management 4.7 and its
+        // replacement (settingsKey) does not exist before it, so the literal serves both.
+        const string k_loaderSettingsKey = "com.unity.xr.management.loader_settings";
+
         // Mirrors what the XR Plug-in Management settings page does on first open: one asset in Assets/XR, registered
         // in the build settings under the key the runtime looks it up by.
         static XRGeneralSettingsPerBuildTarget GeneralSettings(bool create)
         {
-            EditorBuildSettings.TryGetConfigObject(XRGeneralSettings.k_SettingsKey, out XRGeneralSettingsPerBuildTarget container);
+            EditorBuildSettings.TryGetConfigObject(k_loaderSettingsKey, out XRGeneralSettingsPerBuildTarget container);
             if (container != null) return container;
 
             var guids = AssetDatabase.FindAssets("t:XRGeneralSettingsPerBuildTarget");
@@ -257,7 +261,7 @@ namespace StageSettAR.Editor
                 AssetDatabase.CreateAsset(container, k_generalSettingsPath);
                 AssetDatabase.SaveAssets();
             }
-            EditorBuildSettings.AddConfigObject(XRGeneralSettings.k_SettingsKey, container, true);
+            EditorBuildSettings.AddConfigObject(k_loaderSettingsKey, container, true);
             return container;
         }
 

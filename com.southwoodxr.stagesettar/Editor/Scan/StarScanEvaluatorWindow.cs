@@ -43,7 +43,7 @@ namespace StageSettAR.Editor
         string m_error;
         Vector2 m_scroll;
 
-        [MenuItem("Tools/StageSettAR/Test Map Against Scan…")]
+        [MenuItem("Tools/StageSettAR/Test Map Against Scan…", false, 21)]
         static void Open() => GetWindow<StarScanEvaluatorWindow>("Test Map Against Scan");
 
         void OnGUI()

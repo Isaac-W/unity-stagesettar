@@ -1,5 +1,6 @@
 using System.IO;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 
 namespace StageSettAR.Editor
 {
@@ -21,7 +22,7 @@ namespace StageSettAR.Editor
             SessionState.SetBool(Key, true);
             if (!EditorUtility.DisplayDialog("StageSettAR", reason + "\n\nRestart the editor now? Your scenes will be saved first.", "Restart now", "Later"))
                 return;
-            if (!EditorApplication.SaveCurrentSceneIfUserWantsTo()) return;
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
             AssetDatabase.SaveAssets();
             // ProjectSettings are written by Save Project; the reopened editor must read the new value.
             EditorApplication.ExecuteMenuItem("File/Save Project");

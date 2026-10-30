@@ -70,6 +70,7 @@ namespace StageSettAR.Editor
         }
 
         /// <summary>Alternative to the download: use a local clone (e.g. a fork) through a file: dependency.</summary>
+        /// <remarks>Not in the Setup window (students should not need it); kept for maintainers to call.</remarks>
         public static void UseLocalFolder()
         {
             try

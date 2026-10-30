@@ -10,7 +10,7 @@ namespace StageSettAR.Editor
     /// </summary>
     static class SceneSetupMenu
     {
-        [MenuItem("Tools/StageSettAR/Set Up Current Scene")]
+        [MenuItem("Tools/StageSettAR/Set Up Current Scene", false, 1)]
         static void SetUp()
         {
             var type = Type.GetType("StageSettAR.Editor.SceneSetupCommand, StageSettAR.Editor.Rig");

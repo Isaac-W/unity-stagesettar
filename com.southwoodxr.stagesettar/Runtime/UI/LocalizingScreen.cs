@@ -14,7 +14,7 @@ namespace StageSettAR
     /// The panel floats a little below eye level and follows the user's view softly (it uses
     /// <see cref="TagAlong"/>), so the real room stays visible. It finds the STAR Localizer in the scene
     /// by itself, also when one is loaded or created later. With no localizer it stays hidden, so a scene
-    /// without a map is not affected. The StageSettAR Rig has one ready-made under its root; the
+    /// without a map is not affected. The XR Interaction Setup has one ready-made under its root; the
     /// parts (canvas group, text) are filled in by the menu builder, or by hand.
     /// </remarks>
     [AddComponentMenu("StageSettAR/Localizing Screen")]

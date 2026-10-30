@@ -35,7 +35,7 @@ namespace StageSettAR.Editor
         float _nearbyMeters = 2.5f;
         bool _loop = true;
 
-        [MenuItem("Tools/StageSettAR/Add Video...")]
+        [MenuItem("Tools/StageSettAR/Add Video…", false, 40)]
         public static void Open()
         {
             var window = GetWindow<AddVideoWindow>(true, "Add Video", true);

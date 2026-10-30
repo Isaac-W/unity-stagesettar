@@ -19,6 +19,7 @@ namespace StageSettAR.Editor
         const string k_gitComment = "# Added by StageSettAR: downloaded copy, not tracked. Turn off in Tools > StageSettAR > Setup.";
 
         static double s_next;
+        const string k_warnedKey = "StageSettAR.PlasticNoIgnoreConfWarned";
 
         static SplatVcsIgnore()
         {
@@ -54,7 +55,10 @@ namespace StageSettAR.Editor
             var file = Path.Combine(dir, ".gitignore");
             if (want)
             {
-                if (!File.Exists(file)) File.WriteAllText(file, k_gitComment + "\n*\n");
+                // UnitySplats ships its own .gitignore (Unity's project template, meant for its repo root), which inside
+                // Packages/ ignores almost nothing; replace it with ours rather than leave the copy tracked.
+                if (!File.Exists(file) || !File.ReadAllText(file).StartsWith(k_gitComment, StringComparison.Ordinal))
+                    File.WriteAllText(file, k_gitComment + "\n*\n");
             }
             else if (File.Exists(file) && File.ReadAllText(file).StartsWith(k_gitComment, StringComparison.Ordinal))
                 File.Delete(file);
@@ -67,9 +71,20 @@ namespace StageSettAR.Editor
             {
                 if (!Directory.Exists(Path.Combine(d.FullName, ".plastic"))) continue;
                 var conf = Path.Combine(d.FullName, "ignore.conf");
-                if (!File.Exists(conf)) return; // never create it: Unity writes its default one first
                 var rel = Path.GetRelativePath(d.FullName, root).Replace('\\', '/');
                 var rule = "/" + (rel == "." ? "" : rel + "/") + "Packages/" + SplatDependencyStep.UnitySplatsId;
+                if (!File.Exists(conf))
+                {
+                    // Never create it: Unity writes its default one (Library, Temp, ...) only when none exists, so ours
+                    // would stop that and get Library checked in. Say so once, instead of silently tracking the copy.
+                    if (want && !SessionState.GetBool(k_warnedKey, false))
+                    {
+                        SessionState.SetBool(k_warnedKey, true);
+                        Debug.LogWarning($"[StageSettAR] This Unity Version Control workspace ({d.FullName}) has no ignore.conf, so the downloaded " +
+                                         $"UnitySplats copy would be checked in. Create ignore.conf (Unity's Version Control window does this), or add: {rule}");
+                    }
+                    return;
+                }
 
                 var text = File.ReadAllText(conf);
                 var nl = text.Contains("\r\n") ? "\r\n" : "\n";

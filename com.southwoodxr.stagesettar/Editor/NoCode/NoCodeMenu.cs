@@ -19,7 +19,7 @@ namespace StageSettAR.Editor
         const string OutputFolder = "Assets/Scripts/NoCodeReference";
         static readonly string[] Components = { "OnTriggerAction", "TimedAction", "CollideAction", "SequenceAction" };
 
-        [MenuItem("Tools/StageSettAR/No-Code/Add Reference Scripts")]
+        [MenuItem("Tools/StageSettAR/No-Code/Add Reference Scripts", false, 41)]
         public static void AddReferenceScripts()
         {
             string templateFolder = TemplateFolder();
@@ -66,7 +66,7 @@ namespace StageSettAR.Editor
         }
 
         // Use this before adding your own version of a component, or Unity reports a duplicate class.
-        [MenuItem("Tools/StageSettAR/No-Code/Remove Reference Scripts")]
+        [MenuItem("Tools/StageSettAR/No-Code/Remove Reference Scripts", false, 42)]
         public static void RemoveReferenceScripts()
         {
             if (!AssetDatabase.IsValidFolder(OutputFolder))
