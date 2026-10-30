@@ -7,13 +7,17 @@ namespace StageSettAR
     /// </summary>
     /// <remarks>
     /// Every component that needs "the user" asks here when its own field is empty. The StageSettAR
-    /// rig tags its camera MainCamera and carries a Player-tagged Head under it, so on the rig both
-    /// resolve at once. A scene with some other rig still works as long as its camera is tagged
+    /// rig tags its camera MainCamera and carries a Head under it (also tagged MainCamera, so trigger zones
+    /// that check for the camera's tag catch the user's head), so on the rig both resolve at once. A scene with some other rig still works as long as its camera is tagged
     /// MainCamera, or it is the only active camera.
     /// </remarks>
     public static class ToolkitRig
     {
-        public const string PlayerTag = "Player";
+        /// <summary>
+        /// The tag that means "the user": the camera's own, which students already check for. The rig's Head shares
+        /// it; Camera.main only looks at cameras, so the Head (which has none) never takes the camera's place.
+        /// </summary>
+        public const string UserTag = "MainCamera";
 
         /// <summary>The camera the user looks through, or null when the scene has none yet.</summary>
         public static Camera UserCamera
@@ -36,21 +40,15 @@ namespace StageSettAR
         }
 
         /// <summary>
-        /// The user's head: the Player-tagged object under the camera on the StageSettAR rig,
+        /// The user's head: the object carrying the gaze source (the Head under the camera on the StageSettAR rig),
         /// otherwise the camera itself.
         /// </summary>
         public static Transform Head
         {
             get
             {
-                // FindWithTag throws if the tag does not exist, which a missing Player tag in a
-                // stripped-down project would turn into a spam of exceptions.
-                try
-                {
-                    var player = GameObject.FindWithTag(PlayerTag);
-                    if (player != null) return player.transform;
-                }
-                catch (UnityException) { }
+                var source = GazeSource.Active;
+                if (source != null) return source.transform;
                 var cam = UserCamera;
                 return cam != null ? cam.transform : null;
             }

@@ -10,7 +10,7 @@ namespace StageSettAR
     /// <remarks>
     /// <para>
     /// Put it on an object with a collider set to Is Trigger. It only reacts to objects tagged
-    /// <see cref="triggerTagName"/>, and the rig's Head carries the Player tag, so the default means
+    /// <see cref="triggerTagName"/>, and the rig's Head carries the MainCamera tag, so the default means
     /// "the user's head". Clear the tag to react to anything.
     /// </para>
     /// <para>
@@ -24,8 +24,8 @@ namespace StageSettAR
     [DisallowMultipleComponent]
     public sealed class OnTriggerAction : MonoBehaviour
     {
-        [Tooltip("Only objects with this tag count. Player is the user's head on the StageSettAR rig. Empty means anything.")]
-        public string triggerTagName = ToolkitRig.PlayerTag;
+        [Tooltip("Only objects with this tag count. MainCamera is the user's head on the StageSettAR rig. Empty means anything.")]
+        public string triggerTagName = ToolkitRig.UserTag;
 
         [Tooltip("Fire On Enter only the first time. On Exit still fires.")]
         public bool enterOnce;

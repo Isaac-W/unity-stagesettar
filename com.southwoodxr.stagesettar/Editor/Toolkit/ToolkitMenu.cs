@@ -31,7 +31,7 @@ namespace StageSettAR.Editor
             var box = go.AddComponent<BoxCollider>();
             box.isTrigger = true;
             box.size = new Vector3(2f, 2f, 2f);
-            go.AddComponent<OnTriggerAction>(); // triggerTagName defaults to Player: the user's head.
+            go.AddComponent<OnTriggerAction>(); // triggerTagName defaults to MainCamera: the user's head.
             Finish(go);
         }
 

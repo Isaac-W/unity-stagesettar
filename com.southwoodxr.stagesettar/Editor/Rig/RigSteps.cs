@@ -380,7 +380,7 @@ namespace StageSettAR.Editor
         {
             var head = new GameObject("Head");
             head.transform.SetParent(cam.transform, false);
-            head.tag = "Player";
+            head.tag = ToolkitRig.UserTag; // what students check for in trigger zones
             head.layer = 2; // Ignore Raycast: pointers do not hit the user's own head.
 
             var sphere = head.AddComponent<SphereCollider>();
@@ -640,7 +640,7 @@ namespace StageSettAR.Editor
             var template = AssetDatabase.LoadAssetAtPath<SceneTemplateAsset>(TemplatePath);
             if (template == null) { Debug.LogError("[StageSettAR] Could not create " + TemplatePath); return; }
             template.templateName = "StageSettAR";
-            template.description = "A Quest passthrough scene with the StageSettAR rig (built from the XR Interaction Toolkit samples): head collider (tag Player), gaze source, screen fades, a Localizing Screen that guides the user while the room is found, no locomotion, and an editor-only character standing under the camera.";
+            template.description = "A Quest passthrough scene with the StageSettAR rig (built from the XR Interaction Toolkit samples): head collider (tag MainCamera), gaze source, screen fades, a Localizing Screen that guides the user while the room is found, no locomotion, and an editor-only character standing under the camera.";
             template.addToDefaults = true;
             var dependencies = template.dependencies;
             if (dependencies != null)
