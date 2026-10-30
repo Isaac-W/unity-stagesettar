@@ -172,6 +172,12 @@ namespace StageSettAR.Editor
                 if (!IsUnitySplatsFolder(root))
                     throw new InvalidDataException($"The download has no package.json named {UnitySplatsId}.");
 
+                // An embedded package's tests compile in the user's project, and UnitySplats 2.0.0's test assembly
+                // uses Unity.Mathematics without referencing it, which fails the whole compile. Nobody here runs them.
+                var tests = Path.Combine(root, "Tests");
+                if (Directory.Exists(tests)) Directory.Delete(tests, true);
+                if (File.Exists(tests + ".meta")) File.Delete(tests + ".meta");
+
                 var target = SplatVcsIgnore.PackageDir;
                 if (Directory.Exists(target)) Directory.Delete(target, true);
                 Directory.Move(root, target);

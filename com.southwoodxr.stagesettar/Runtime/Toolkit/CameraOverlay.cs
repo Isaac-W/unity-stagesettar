@@ -16,7 +16,8 @@ namespace StageSettAR
     /// after either, so a sequence can chain on whichever it needs.
     /// </para>
     /// </remarks>
-    [DisallowMultipleComponent]
+    // DisallowMultipleComponent is on each effect, not here: on the base it would also stop a fade and a
+    // circle wipe from sharing one object (the rig's Screen Effects holds both).
     public abstract class CameraOverlay : MonoBehaviour
     {
         [Tooltip("The camera to cover. Found automatically (the user's camera) when empty.")]

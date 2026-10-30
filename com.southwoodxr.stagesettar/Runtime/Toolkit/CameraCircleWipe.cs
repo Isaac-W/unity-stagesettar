@@ -15,6 +15,7 @@ namespace StageSettAR
     /// narrowing the periphery is itself a comfort technique during motion.
     /// </remarks>
     [AddComponentMenu("StageSettAR/Camera Circle Wipe")]
+    [DisallowMultipleComponent]
     public class CameraCircleWipe : CameraOverlay
     {
         [Header("Wipe")]

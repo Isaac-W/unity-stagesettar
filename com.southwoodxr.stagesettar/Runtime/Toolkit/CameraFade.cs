@@ -15,6 +15,7 @@ namespace StageSettAR
     /// pipeline changes and renders correctly to both eyes.
     /// </remarks>
     [AddComponentMenu("StageSettAR/Camera Fade")]
+    [DisallowMultipleComponent]
     public class CameraFade : CameraOverlay
     {
         /// <inheritdoc/>

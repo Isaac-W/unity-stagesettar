@@ -322,12 +322,20 @@ namespace StageSettAR.Editor
         }
 
         // OpenXR's own validation (Window > XR > OpenXR > Project Validation) is public; apply its automatic fixes.
+        // Best effort: some rules throw while merely being checked (OpenXR 1.19's Meta Quest rules read the feature from
+        // the selected build target, which has none when that is not Android), and that must not fail the step.
         static void ApplyOpenXrValidationFixes()
         {
             foreach (var group in k_groups)
             {
                 var issues = new List<OpenXRFeature.ValidationRule>();
-                OpenXRProjectValidation.GetCurrentValidationIssues(issues, group);
+                try { OpenXRProjectValidation.GetCurrentValidationIssues(issues, group); }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[StageSettAR] OpenXR's project validation could not run for {group} ({e.GetType().Name}); " +
+                                     "the settings above are applied. Switch to Android, then check Project Settings > XR Plug-in Management > Project Validation.");
+                    continue;
+                }
                 foreach (var rule in issues)
                 {
                     // The restart rules open their own dialogs and relaunch the editor; leave those to the user.
