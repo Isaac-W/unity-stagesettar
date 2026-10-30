@@ -372,7 +372,7 @@ namespace StageSettAR.Editor
                 });
             }
 
-            var renderers = UsedRenderers();
+            var renderers = TargetRenderers();
             if (renderers.Count == 0) p.Stuck.Add("assign a URP renderer in Project Settings > Graphics or Quality");
             foreach (var renderer in renderers)
             {
@@ -417,8 +417,10 @@ namespace StageSettAR.Editor
             return list;
         }
 
-        // Every renderer of the default pipeline asset and of each quality level's asset (same set the splat step uses).
-        static List<ScriptableRendererData> UsedRenderers()
+        // Every renderer of the default pipeline asset and of each quality level's asset, plus every URP renderer asset
+        // under Assets/ that nothing points at yet (same set the splat step uses): one a quality preset or script
+        // switches to later would otherwise show no passthrough.
+        static List<ScriptableRendererData> TargetRenderers()
         {
             var list = new List<ScriptableRendererData>();
             var seen = new HashSet<RenderPipelineAsset>();
@@ -433,6 +435,9 @@ namespace StageSettAR.Editor
             }
             AddPipeline(GraphicsSettings.defaultRenderPipeline);
             for (var i = 0; i < QualitySettings.names.Length; i++) AddPipeline(QualitySettings.GetRenderPipelineAssetAt(i));
+            foreach (var guid in AssetDatabase.FindAssets("t:UniversalRendererData", new[] { "Assets" }))
+                if (AssetDatabase.LoadAssetAtPath<ScriptableRendererData>(AssetDatabase.GUIDToAssetPath(guid)) is { } r && !list.Contains(r))
+                    list.Add(r);
             return list;
         }
 

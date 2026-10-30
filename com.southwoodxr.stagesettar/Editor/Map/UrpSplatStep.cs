@@ -11,9 +11,9 @@ using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 namespace StageSettAR.Editor
 {
     /// <summary>
-    /// Makes every URP renderer that the project can actually use (Graphics settings and every quality
-    /// level) sort splats with <see cref="StageSettARSplatURPFeature"/>, and deactivates UnitySplats' own
-    /// feature, so splats are sorted once.
+    /// Makes every URP renderer the project could render with (Graphics settings, every quality level, and
+    /// every URP renderer asset under Assets/) sort splats with <see cref="StageSettARSplatURPFeature"/>, and
+    /// deactivates UnitySplats' own feature, so splats are sorted once.
     /// </summary>
     /// <remarks>
     /// Lives in the gated Map assembly, so it only exists once UnitySplats is installed; the Setup window
@@ -55,7 +55,7 @@ namespace StageSettAR.Editor
 
         static SetupStatus Evaluate(out string detail)
         {
-            var renderers = UsedRenderers();
+            var renderers = TargetRenderers();
             if (renderers.Count == 0)
             {
                 detail = "No URP renderer is assigned in Project Settings > Graphics or Quality.";
@@ -97,7 +97,7 @@ namespace StageSettAR.Editor
         public void Run()
         {
             var changed = false;
-            foreach (var data in UsedRenderers())
+            foreach (var data in TargetRenderers())
             {
                 if (Inspect(data) != State.NeedsWork) continue;
                 if (!IsEditable(data))
@@ -151,7 +151,7 @@ namespace StageSettAR.Editor
 
         // Every renderer of the default pipeline asset and of each quality level's asset. A quality level
         // without its own asset uses the default one, which is already included.
-        static List<ScriptableRendererData> UsedRenderers()
+        static List<ScriptableRendererData> TargetRenderers()
         {
             var list = new List<ScriptableRendererData>();
             var seen = new HashSet<RenderPipelineAsset>();
@@ -166,6 +166,13 @@ namespace StageSettAR.Editor
             }
             AddPipeline(GraphicsSettings.defaultRenderPipeline);
             for (var i = 0; i < QualitySettings.names.Length; i++) AddPipeline(QualitySettings.GetRenderPipelineAssetAt(i));
+
+            // Renderers no setting points at yet: an unassigned quality preset (the Mixed Reality template ships a
+            // Balanced one), or one a script switches to at runtime. A sort on a renderer nobody uses costs nothing,
+            // and a machine that ends up on one would otherwise draw no splats. Only Assets/, which can be edited.
+            foreach (var guid in AssetDatabase.FindAssets("t:UniversalRendererData", new[] { "Assets" }))
+                if (AssetDatabase.LoadAssetAtPath<ScriptableRendererData>(AssetDatabase.GUIDToAssetPath(guid)) is { } r && !list.Contains(r))
+                    list.Add(r);
             return list;
         }
 
