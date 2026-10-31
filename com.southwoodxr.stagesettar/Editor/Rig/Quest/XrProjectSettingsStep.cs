@@ -24,7 +24,7 @@ namespace StageSettAR.Editor
     /// Configures a plain Unity 3D (URP) project the way the Mixed Reality template is set up for Meta Quest
     /// passthrough: Player settings, XR Plug-in Management (OpenXR for Android and for Standalone, so Quest Link
     /// works), the OpenXR features (Quest support, hands, controller profiles, the AR Foundation features with
-    /// passthrough camera images and the boundary suppressed), the URP assets and renderers, and XRI's XR Interaction
+    /// passthrough camera images and the boundary suppressed), the URP assets and renderers (including a dedicated Quest asset and renderer), and XRI's XR Interaction
     /// Simulator (simulated headset and hands when pressing Play without a headset).
     /// </summary>
     /// <remarks>
@@ -102,7 +102,7 @@ namespace StageSettAR.Editor
             ApplyOpenXrValidationFixes();
             AssetDatabase.SaveAssets();
             _checked = -10;
-            Debug.Log("[StageSettAR] Applied XR project settings (Player, XR Plug-in Management, OpenXR features, URP).");
+            Debug.Log("[StageSettAR] Applied XR project settings (Player, XR Plug-in Management, OpenXR features, URP, Quest renderer).");
 
             if (s_restartNeeded)
             {
@@ -114,6 +114,8 @@ namespace StageSettAR.Editor
         /// <summary>Quest builds need the Android target; it is slow to switch, so the user chooses when.</summary>
         public void DrawOptions()
         {
+            if (GUILayout.Button("Open Build Profiles (Add Build Profile > Meta Quest)", GUILayout.Height(20)))
+                EditorApplication.ExecuteMenuItem("File/Build Profiles");
             if (EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android) return;
             if (!GUILayout.Button("Switch to Android (for Quest builds)", GUILayout.Height(20))) return;
             if (!EditorUtility.DisplayDialog("StageSettAR", "Switching the build target reimports assets and can take a while. Switch to Android now?", "Switch", "Cancel")) return;
@@ -133,11 +135,12 @@ namespace StageSettAR.Editor
             var note = EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android ? ""
                 : $" The active build target is {EditorUserBuildSettings.activeBuildTarget}; switch to Android before building for Quest.";
             if (SetupRestart.Pending) note += " Restart the editor to finish applying the input setting.";
-            const string other = " Other build checks: Window > XR > Project Validation.";
+            // Unity (6000.3) has no public API to create a build profile, so the Meta Quest one is left to the user.
+            const string other = " Also add the Meta Quest build profile (File > Build Profiles > Add Build Profile > Meta Quest; the Open Build Profiles button below). Other build checks: Window > XR > Project Validation.";
 
             if (pass.Todo.Count == 0 && pass.Stuck.Count == 0)
             {
-                detail = "Player, XR Plug-in Management (OpenXR), Quest OpenXR features and URP are configured." + note + other;
+                detail = "Player, XR Plug-in Management (OpenXR), Quest OpenXR features, the Quest URP asset and renderer are configured." + note + other;
                 return SetupStatus.Done;
             }
             if (pass.Todo.Count == 0)
@@ -179,6 +182,7 @@ namespace StageSettAR.Editor
             Player(p);
             Management(p);
             OpenXr(p);
+            QuestPipeline(p); // before Urp, so the shared asset settings and renderer features cover the Quest asset too
             Urp(p);
             EditorQuality(p);
             Simulator(p);
@@ -214,6 +218,17 @@ namespace StageSettAR.Editor
             // Meta's camera image access needs API level 32.
             p.Need("Android minimum API level 32", PlayerSettings.Android.minSdkVersion >= k_minApiLevel,
                 () => PlayerSettings.Android.minSdkVersion = k_minApiLevel);
+
+            // Unchecks "Override Default Package Name": Unity then derives the Android package name from the company
+            // and product name instead of keeping a fixed one. (The target API level stays automatic: the newest
+            // installed, which Quest accepts, and a fixed one would need that SDK platform installed.)
+            var overrideId = so?.FindProperty("overrideDefaultApplicationIdentifier");
+            p.Need("Default Android package name (no override)", overrideId == null || !overrideId.boolValue, () =>
+            {
+                overrideId.boolValue = false;
+                so.ApplyModifiedPropertiesWithoutUndo();
+                AssetDatabase.SaveAssets();
+            });
         }
 
         static SerializedObject PlayerSettingsObject()
@@ -438,18 +453,14 @@ namespace StageSettAR.Editor
 
         static void Urp(Pass p)
         {
-            // HDR off and 4x MSAA are for the headset; apply them to the pipeline assets Android builds can use.
+            // Quest's recommended pipeline settings (HDR, MSAA, the camera copies and terrain holes all cost fill rate
+            // or bandwidth on the headset); apply them to the pipeline assets Android builds can use.
             foreach (var asset in AndroidPipelines())
             {
                 var a = asset;
-                var ok = !a.supportsHDR && a.msaaSampleCount == 4;
-                if (!ok && !IsEditable(a)) { p.Stuck.Add($"{a.name} is read-only or in a package (HDR off, 4x MSAA); assign an asset from Assets/ in Quality settings"); continue; }
-                p.Need($"{a.name}: HDR off, 4x MSAA", ok, () =>
-                {
-                    a.supportsHDR = false;
-                    a.msaaSampleCount = 4;
-                    EditorUtility.SetDirty(a);
-                });
+                var ok = PipelineOk(a);
+                if (!ok && !IsEditable(a)) { p.Stuck.Add($"{a.name} is read-only or in a package (Quest pipeline settings: no HDR, no MSAA, render scale 1); assign an asset from Assets/ in Quality settings"); continue; }
+                p.Need($"{a.name}: HDR off, MSAA off, render scale 1, no opaque/depth texture, no terrain holes", ok, () => FixPipeline(a));
             }
 
             var renderers = TargetRenderers();
@@ -470,7 +481,7 @@ namespace StageSettAR.Editor
             }
 
             // Screen-space ambient occlusion costs too much on the headset and does not suit passthrough, so the
-            // renderers Android builds use (the Mobile pipeline's) do without it.
+            // renderers Android builds use do without it.
             foreach (var renderer in AndroidRenderers())
             {
                 var r = renderer;
@@ -484,6 +495,135 @@ namespace StageSettAR.Editor
             }
         }
 
+        // ---- Quest URP asset and renderer ----
+
+        const string k_questPipelinePath = "Assets/Settings/Quest_RPAsset.asset";
+        const string k_questRendererPath = "Assets/Settings/Quest_Renderer.asset";
+
+        // MSAA off (the sample count of a disabled MsaaQuality is 1), no HDR, native resolution, no camera copies and
+        // no terrain holes. Terrain holes have no setter on the asset, so that one goes through the serialized field.
+        static bool PipelineOk(UniversalRenderPipelineAsset a) =>
+            !a.supportsHDR && a.msaaSampleCount == 1 && Mathf.Approximately(a.renderScale, 1f)
+            && !a.supportsCameraOpaqueTexture && !a.supportsCameraDepthTexture && !a.supportsTerrainHoles;
+
+        static void FixPipeline(UniversalRenderPipelineAsset a)
+        {
+            a.supportsHDR = false;
+            a.msaaSampleCount = 1;
+            a.renderScale = 1f;
+            a.supportsCameraOpaqueTexture = false;
+            a.supportsCameraDepthTexture = false;
+            var so = new SerializedObject(a);
+            var holes = so.FindProperty("m_SupportsTerrainHoles");
+            if (holes != null) { holes.boolValue = false; so.ApplyModifiedPropertiesWithoutUndo(); }
+            EditorUtility.SetDirty(a);
+        }
+
+        // Unity's Quest recommendations: Forward rendering, no post-processing (its data cleared, which is what the
+        // inspector's "Enabled" toggle does), no depth priming, and an intermediate texture only when a feature needs one.
+        static bool QuestRendererOk(UniversalRendererData r) =>
+            r.renderingMode == RenderingMode.Forward && r.postProcessData == null
+            && r.depthPrimingMode == DepthPrimingMode.Disabled && r.intermediateTextureMode == IntermediateTextureMode.Auto;
+
+        // A dedicated URP asset and renderer for the headset, so the template's Mobile and PC assets stay as they are.
+        // Created once and only corrected afterwards; the Android quality level then points at it. The AR renderer
+        // features and the missing SSAO are applied by Urp (the renderer is in Assets/), and the splat feature by the splat step.
+        static void QuestPipeline(Pass p)
+        {
+            if (!AndroidQualityLevel(out var qso, out var level)) return;
+
+            var renderer = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(k_questRendererPath);
+            var asset = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(k_questPipelinePath);
+            p.Need("Quest URP asset and renderer (Assets/Settings/Quest_RPAsset, Quest_Renderer)",
+                renderer != null && asset != null && QuestRendererOk(renderer) && QuestAssetOk(asset, renderer), () =>
+                {
+                    (renderer, asset) = EnsureQuestAssets(renderer, asset);
+                });
+
+            var pipeline = level.FindPropertyRelative("customRenderPipeline");
+            p.Need("Android quality level uses Quest_RPAsset", asset != null && pipeline != null && pipeline.objectReferenceValue == asset, () =>
+            {
+                if (asset == null || pipeline == null) throw new InvalidOperationException("Quest_RPAsset or the quality level's customRenderPipeline field is missing.");
+                pipeline.objectReferenceValue = asset;
+                qso.ApplyModifiedPropertiesWithoutUndo();
+                AssetDatabase.SaveAssets();
+            });
+
+            // 0 Disabled, 1 Per Texture, 2 Forced On: Unity's Quest recommendation (and the Meta Quest build profile's).
+            var aniso = level.FindPropertyRelative("anisotropicTextures");
+            if (aniso != null) p.Need("Android quality level: anisotropic textures forced on", aniso.intValue == 2, () =>
+            {
+                aniso.intValue = 2;
+                qso.ApplyModifiedPropertiesWithoutUndo();
+                AssetDatabase.SaveAssets();
+            });
+        }
+
+        static bool QuestAssetOk(UniversalRenderPipelineAsset a, UniversalRendererData r)
+        {
+            var slots = new SerializedObject(a).FindProperty("m_RendererDataList");
+            return PipelineOk(a) && a.useSRPBatcher && slots != null && slots.arraySize > 0 && slots.GetArrayElementAtIndex(0).objectReferenceValue == r;
+        }
+
+        static (UniversalRendererData, UniversalRenderPipelineAsset) EnsureQuestAssets(UniversalRendererData renderer, UniversalRenderPipelineAsset asset)
+        {
+            if (!AssetDatabase.IsValidFolder("Assets/Settings")) AssetDatabase.CreateFolder("Assets", "Settings");
+
+            if (renderer == null)
+            {
+                renderer = ScriptableObject.CreateInstance<UniversalRendererData>();
+                AssetDatabase.CreateAsset(renderer, k_questRendererPath);
+                ResourceReloader.ReloadAllNullIn(renderer, UniversalRenderPipelineAsset.packagePath); // its shader and material references
+            }
+            if (!QuestRendererOk(renderer))
+            {
+                renderer.renderingMode = RenderingMode.Forward;
+                renderer.postProcessData = null;
+                renderer.depthPrimingMode = DepthPrimingMode.Disabled;
+                renderer.intermediateTextureMode = IntermediateTextureMode.Auto;
+                EditorUtility.SetDirty(renderer);
+            }
+
+            if (asset == null)
+            {
+                asset = UniversalRenderPipelineAsset.Create(renderer);
+                AssetDatabase.CreateAsset(asset, k_questPipelinePath);
+            }
+            var so = new SerializedObject(asset);
+            var slots = so.FindProperty("m_RendererDataList");
+            if (slots != null && slots.arraySize > 0) slots.GetArrayElementAtIndex(0).objectReferenceValue = renderer;
+            so.FindProperty("m_UseSRPBatcher").boolValue = true;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            FixPipeline(asset);
+            AssetDatabase.SaveAssets();
+            Debug.Log("[StageSettAR] Created/updated the Quest URP asset and renderer in Assets/Settings.", asset);
+            return (renderer, asset);
+        }
+
+        // The quality level Android uses (m_PerPlatformDefaultQuality "Android"), as a property of the quality settings asset.
+        static bool AndroidQualityLevel(out SerializedObject so, out SerializedProperty level)
+        {
+            so = null;
+            level = null;
+            var assets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/QualitySettings.asset");
+            if (assets == null || assets.Length == 0) return false;
+            so = new SerializedObject(assets[0]);
+            var defaults = so.FindProperty("m_PerPlatformDefaultQuality");
+            var levels = so.FindProperty("m_QualitySettings");
+            if (defaults == null || levels == null) return false;
+            for (var i = 0; i < defaults.arraySize; i++)
+            {
+                var entry = defaults.GetArrayElementAtIndex(i);
+                var key = entry.FindPropertyRelative("first");
+                var value = entry.FindPropertyRelative("second");
+                if (key == null || value == null || key.stringValue != "Android") continue;
+                if (value.intValue < 0 || value.intValue >= levels.arraySize) return false;
+                level = levels.GetArrayElementAtIndex(value.intValue);
+                return true;
+            }
+            return false;
+        }
+
         // ---- editor quality ----
 
         // Play mode in the editor should look like the headset, so Standalone uses the quality level (and with it the
@@ -493,7 +633,7 @@ namespace StageSettAR.Editor
         static void EditorQuality(Pass p)
         {
             if (!EditorQualityState(false, out var known) || !known) return;
-            p.Need("Editor Play mode uses the Android quality level (the Mobile renderer)", false, () => EditorQualityState(true, out _));
+            p.Need("Editor Play mode uses the Android quality level", false, () => EditorQualityState(true, out _));
         }
 
         // Returns whether the editor already uses the Android level; known is false when the asset has no usable layout.
