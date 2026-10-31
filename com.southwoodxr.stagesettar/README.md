@@ -70,14 +70,17 @@ For more advanced use the same component has **On Localizing**, **On Localized**
 
 The same component serves Quest and phones (ARCore / ARKit) through AR Foundation only. The basics sit at the top level; everything else is in collapsed groups.
 
-**Lens mount** (`mount`). The camera sensor is not at the head camera: on Quest 3 the left RGB camera is about 5 cm left of and 2 cm below the AR Camera and looks about 11° down, which would be roughly 19 cm of error per metre of distance if ignored. The mount is a pose relative to the AR Camera in Unity camera-local axes (x right, y up, z forward), and has two fields:
+**Lens mount** (`mount`). The camera sensor is not at the head camera: on Quest 3 the left RGB camera is about 5 cm left of and 2 cm below the AR Camera and looks about 11° down, which would be roughly 19 cm of error per metre of distance if ignored. The mount is a pose relative to the AR Camera in Unity camera-local axes (x right, y up, z forward), and has three fields:
 
 | Setting | Default |
 |---|---|
-| `position` | (-0.047, -0.023, 0.043) m, measured on a Quest 3 (left camera) |
-| `eulerAngles` | (10.94, 0.20, -0.15)°, i.e. looking 10.9° down |
+| `preset` | **Auto**: the measured values for the headset it runs on. **Quest 3** forces them; **Custom** uses the two fields below |
+| `position` | Custom only. Starts at (-0.047, -0.023, 0.043) m, measured on a Quest 3 (left camera) |
+| `eulerAngles` | Custom only. Starts at (10.94, 0.20, -0.15)°, i.e. looking 10.9° down |
 
-If the platform ever provides the lens pose through AR Foundation, that is used instead (`TryGetProvidedMount`); AR Foundation 6 does not expose camera extrinsics, so today the fields above are what is used. On phones the camera transform already is the sensor, so the mount is identity there and the fields are ignored (the screen-orientation roll is still applied).
+Auto knows the Quest 3 (by its Android codename `eureka`, or its model name). On a headset that has not been measured, such as a Quest 3S, it uses the Quest 3 values and logs one warning (with the model and codename strings, so a new headset can be added); set the preset to **Custom** and adjust the fields until content lines up. Measured presets live in `LensMounts`; add one only from a real measurement.
+
+If the platform ever provides the lens pose through AR Foundation, that is used instead (`TryGetProvidedMount`); AR Foundation 6 does not expose camera extrinsics, so today the preset or the fields above are what is used. On phones the camera transform already is the sensor, so the mount is identity there and the fields are ignored (the screen-orientation roll is still applied).
 
 **Image** (`image`). `maxWidth` (default 0 = automatic) only matters for the processor-side colour conversion described below. `gpuYuvConversion` (default on) enables the raw upload path.
 
@@ -183,7 +186,7 @@ The export is the WebXR capture world: right-handed, y up, metres. The Unity map
 
 ## Quest caveat
 
-The lens mount defaults are measured on one Quest 3 (see "Camera source settings"). If the map sits consistently off in the direction you look, check the mount first.
+The lens mount is measured on one Quest 3 (see "Camera source settings"); a Quest 3S uses the same values with a warning until it has been measured. If the map sits consistently off in the direction you look, check the mount first.
 
 star-mobile maps are usually trained only at rotation 1 (portrait phone images). The Quest camera is landscape, so frames are rotated and padded to fit the network, which leaves fewer landmarks visible and lowers confidence. Prefer maps whose `rotations` include 0 (check the `StarMap` asset).
 

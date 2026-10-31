@@ -41,8 +41,8 @@ namespace StageSettAR
     /// rotation) relative to the XR camera's transform, the same transform whose pose is sampled
     /// here, in Unity camera-local axes (x right, y up, z forward). It comes from the platform when AR
     /// Foundation provides it (<see cref="TryGetProvidedMount"/>; it does not yet), otherwise from
-    /// <see cref="MountSettings"/>, whose defaults were measured on a Quest 3 (left camera, the one AR Foundation
-    /// delivers). On phones the camera transform already is the sensor, apart from a roll that follows the screen
+    /// <see cref="MountSettings"/>: by default the preset for the headset it runs on (<see cref="LensMounts"/>;
+    /// measured on a Quest 3, left camera, the one AR Foundation delivers), or the custom values. On phones the camera transform already is the sensor, apart from a roll that follows the screen
     /// orientation, so the mount is identity there.</para>
     /// </remarks>
     [AddComponentMenu("StageSettAR/AR Foundation Camera Source")]
@@ -63,7 +63,7 @@ namespace StageSettAR
         [Tooltip("Added to the estimated capture time, in seconds. Positive means the image was captured later than estimated.")]
         [SerializeField] float timeOffsetSeconds;
 
-        [Tooltip("Where the camera sensor sits relative to the headset's camera. The defaults suit a Quest 3.")]
+        [Tooltip("Where the camera sensor sits relative to the headset's camera. Auto picks the measured values for the headset it runs on; choose Custom to use your own.")]
         [SerializeField] MountSettings mount = new MountSettings();
 
         [Tooltip("How camera images are brought to the GPU. The defaults pick the cheapest way automatically.")]
@@ -75,12 +75,23 @@ namespace StageSettAR
         [Serializable]
         public sealed class MountSettings
         {
-            [Tooltip("Where the passthrough RGB camera sits relative to the head camera, in metres (x right, y up, z forward). " +
-                     "Defaults are measured for Quest 3 (left camera). Ignored on phones, where the camera is the sensor.")]
+            [Tooltip("Auto: the measured values for the headset this runs on (Quest 3), or the Quest 3 values with a warning on a headset " +
+                     "that has not been measured, such as a Quest 3S. Custom: the Position and Euler Angles below. Ignored on phones, where the camera is the sensor.")]
+            public LensMountPreset preset = LensMountPreset.Auto;
+            [Tooltip("Custom only. Where the passthrough RGB camera sits relative to the head camera, in metres (x right, y up, z forward). " +
+                     "Starts at the Quest 3 values (left camera).")]
             public Vector3 position = new Vector3(-0.047f, -0.023f, 0.043f);
-            [Tooltip("How the passthrough RGB camera is tilted relative to the head camera, in degrees. About 11 on x means looking 11 degrees down. " +
-                     "Defaults are measured for Quest 3 (left camera). Ignored on phones.")]
+            [Tooltip("Custom only. How the passthrough RGB camera is tilted relative to the head camera, in degrees. About 11 on x means looking 11 degrees down. " +
+                     "Starts at the Quest 3 values (left camera).")]
             public Vector3 eulerAngles = new Vector3(10.94f, 0.20f, -0.15f);
+        }
+
+        /// <summary>Which lens mount <see cref="MountSettings"/> uses.</summary>
+        public enum LensMountPreset
+        {
+            [InspectorName("Auto (by device)")] Auto,
+            [InspectorName("Quest 3")] Quest3,
+            Custom,
         }
 
         [Serializable]
@@ -643,11 +654,58 @@ namespace StageSettAR
             }
             else
             {
-                _lens = new Pose(mount.position, Quaternion.Euler(mount.eulerAngles));
-                _lensSource = "default/custom";
+                _lens = ResolvePreset(out _lensSource);
             }
             if (debug.logDiagnostics)
-                Debug.Log($"[StageSettAR] Lens mount used: {_lensSource}, position {_lens.position:F3}, euler {_lens.rotation.eulerAngles:F2}.");
+                Debug.Log($"[StageSettAR] Lens mount used: {_lensSource}, position {_lens.position:F3}, euler {_lens.rotation.eulerAngles:F2}; device model '{SystemInfo.deviceModel}', codename '{DeviceCodename()}'.");
+        }
+
+        // android.os.Build.DEVICE, the codename Meta's tooling matches ("eureka" is the Quest 3); SystemInfo only has the display model.
+        static string DeviceCodename()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using var build = new AndroidJavaClass("android.os.Build");
+                return build.GetStatic<string>("DEVICE") ?? "";
+            }
+            catch (Exception) { return ""; }
+#else
+            return "";
+#endif
+        }
+
+        Pose ResolvePreset(out string source)
+        {
+            switch (mount.preset)
+            {
+                case LensMountPreset.Custom:
+                    source = "custom";
+                    return new Pose(mount.position, Quaternion.Euler(mount.eulerAngles));
+                case LensMountPreset.Quest3:
+                    source = "Quest 3 preset";
+                    return LensMounts.Quest3;
+            }
+
+            var model = SystemInfo.deviceModel;
+            var codename = DeviceCodename();
+            if (LensMounts.TryGetMeasured(model, codename, out var measured, out var name))
+            {
+                source = "auto: " + name;
+                return measured;
+            }
+
+            // Not measured: the Quest 3 values are the best available, and a headset that is off by a few centimetres
+            // is easier to fix when it is known why. The editor has no passthrough camera to be wrong about.
+            source = $"auto: no measurement for '{model}' / '{codename}', Quest 3 values";
+            if (!Application.isEditor)
+            {
+                var what = LensMounts.IsQuest3S(model) ? "This looks like a Quest 3S, which has not been measured yet" : "Unrecognised headset";
+                what += $" (model '{model}', codename '{codename}')";
+                Debug.LogWarning($"[StageSettAR] {what}. Using the Quest 3 lens mount, so content may sit a little off. " +
+                                 "On the AR Foundation Camera Source set Mount > Preset to Custom and adjust Position and Euler Angles until it lines up.", this);
+            }
+            return LensMounts.Quest3;
         }
 
         // ---------------------------------------------------------------- diagnostics
