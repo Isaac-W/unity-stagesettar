@@ -114,8 +114,6 @@ namespace StageSettAR.Editor
         /// <summary>Quest builds need the Android target; it is slow to switch, so the user chooses when.</summary>
         public void DrawOptions()
         {
-            if (GUILayout.Button("Open Build Profiles (Add Build Profile > Meta Quest)", GUILayout.Height(20)))
-                EditorApplication.ExecuteMenuItem("File/Build Profiles");
             if (EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android) return;
             if (!GUILayout.Button("Switch to Android (for Quest builds)", GUILayout.Height(20))) return;
             if (!EditorUtility.DisplayDialog("StageSettAR", "Switching the build target reimports assets and can take a while. Switch to Android now?", "Switch", "Cancel")) return;
@@ -135,8 +133,9 @@ namespace StageSettAR.Editor
             var note = EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android ? ""
                 : $" The active build target is {EditorUserBuildSettings.activeBuildTarget}; switch to Android before building for Quest.";
             if (SetupRestart.Pending) note += " Restart the editor to finish applying the input setting.";
-            // Unity (6000.3) has no public API to create a build profile, so the Meta Quest one is left to the user.
-            const string other = " Also add the Meta Quest build profile (File > Build Profiles > Add Build Profile > Meta Quest; the Open Build Profiles button below). Other build checks: Window > XR > Project Validation.";
+            // The Android platform's own settings carry what Unity's Quest recommendations call for (Vulkan, IL2CPP, ARM64, instancing,
+            // anisotropic filtering); no separate Meta Quest build profile is created, and Unity has no public API for one.
+            const string other = " Other build checks: Window > XR > Project Validation.";
 
             if (pass.Todo.Count == 0 && pass.Stuck.Count == 0)
             {
