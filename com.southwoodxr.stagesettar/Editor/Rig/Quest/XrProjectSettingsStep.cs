@@ -45,6 +45,7 @@ namespace StageSettAR.Editor
         const string k_hands = "UnityEngine.XR.Hands.OpenXR.";
         const string k_camera = k_meta + "ARCameraFeature";
         const string k_boundary = k_meta + "BoundaryVisibilityFeature";
+        const string k_occlusion = k_meta + "AROcclusionFeature";
 
         static readonly BuildTargetGroup[] k_groups = { BuildTargetGroup.Android, BuildTargetGroup.Standalone };
 
@@ -67,9 +68,10 @@ namespace StageSettAR.Editor
             k_meta + "ARRaycastFeature",
             k_meta + "ARBoundingBoxFeature",
             k_meta + "ARMeshFeature",
-            k_meta + "AROcclusionFeature",
+            k_occlusion,
             k_meta + "DisplayUtilitiesFeature",
             k_boundary,
+            k_profiles + "HandInteractionProfile", // hand-tracking input through the OpenXR action system, on the headset only
         };
 
         static bool s_restartNeeded;
@@ -178,6 +180,7 @@ namespace StageSettAR.Editor
             Management(p);
             OpenXr(p);
             Urp(p);
+            EditorQuality(p);
             Simulator(p);
         }
 
@@ -316,7 +319,12 @@ namespace StageSettAR.Editor
                 if (g != BuildTargetGroup.Android) continue;
                 var camera = FindFeature(settings, k_camera);
                 var boundary = FindFeature(settings, k_boundary);
+                var occlusion = FindFeature(settings, k_occlusion);
                 if (camera != null) p.Need("Passthrough camera image support (CPU)", GetBool(camera, "m_CameraImageSupport"), () => SetBool(camera, "m_CameraImageSupport", true));
+                // Passthrough from the first frame, before Unity's splash screen, rather than black until the app starts.
+                if (camera != null) p.Need("Passthrough shown before the splash screen", GetBool(camera, "m_PassthroughPreSplashScreen"), () => SetBool(camera, "m_PassthroughPreSplashScreen", true));
+                // Environment depth with the hands cut out, so virtual objects can be hidden by the room but not by the user's own hands.
+                if (occlusion != null) p.Need("Occlusion: hand removal", GetBool(occlusion, "m_EnableHandRemoval"), () => SetBool(occlusion, "m_EnableHandRemoval", true));
                 if (boundary != null) p.Need("Boundary hidden while passthrough shows", GetBool(boundary, "m_SuppressVisibility"), () => SetBool(boundary, "m_SuppressVisibility", true));
             }
         }
@@ -460,6 +468,75 @@ namespace StageSettAR.Editor
                     EditorUtility.SetDirty(r);
                 });
             }
+
+            // Screen-space ambient occlusion costs too much on the headset and does not suit passthrough, so the
+            // renderers Android builds use (the Mobile pipeline's) do without it.
+            foreach (var renderer in AndroidRenderers())
+            {
+                var r = renderer;
+                var ssao = r.rendererFeatures.Where(f => f is ScreenSpaceAmbientOcclusion).ToList();
+                if (ssao.Count == 0) continue;
+                if (!IsEditable(r)) { p.Stuck.Add($"{r.name} is read-only or in a package (Screen Space Ambient Occlusion); assign a renderer from Assets/ in Quality settings"); continue; }
+                p.Need($"{r.name}: no Screen Space Ambient Occlusion", false, () =>
+                {
+                    foreach (var f in ssao) RemoveFeature(r, f);
+                });
+            }
+        }
+
+        // ---- editor quality ----
+
+        // Play mode in the editor should look like the headset, so Standalone uses the quality level (and with it the
+        // URP asset and renderer) that Android uses, not the template's separate desktop one. That level has to stop
+        // excluding Standalone to be selectable there. Read and written through the quality settings asset because
+        // the per-platform defaults and exclusions have no public API.
+        static void EditorQuality(Pass p)
+        {
+            if (!EditorQualityState(false, out var known) || !known) return;
+            p.Need("Editor Play mode uses the Android quality level (the Mobile renderer)", false, () => EditorQualityState(true, out _));
+        }
+
+        // Returns whether the editor already uses the Android level; known is false when the asset has no usable layout.
+        // With fix, makes it so.
+        static bool EditorQualityState(bool fix, out bool known)
+        {
+            known = false;
+            var assets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/QualitySettings.asset");
+            if (assets == null || assets.Length == 0) return false;
+            var so = new SerializedObject(assets[0]);
+            var defaults = so.FindProperty("m_PerPlatformDefaultQuality");
+            var levels = so.FindProperty("m_QualitySettings");
+            var current = so.FindProperty("m_CurrentQuality");
+            if (defaults == null || levels == null || current == null) return false;
+
+            SerializedProperty android = null, standalone = null;
+            for (var i = 0; i < defaults.arraySize; i++)
+            {
+                var entry = defaults.GetArrayElementAtIndex(i);
+                var key = entry.FindPropertyRelative("first");
+                var value = entry.FindPropertyRelative("second");
+                if (key == null || value == null) continue;
+                if (key.stringValue == "Android") android = value;
+                else if (key.stringValue == "Standalone") standalone = value;
+            }
+            if (android == null || standalone == null || android.intValue < 0 || android.intValue >= levels.arraySize) return false;
+            known = true;
+
+            var level = android.intValue;
+            var excluded = levels.GetArrayElementAtIndex(level).FindPropertyRelative("excludedTargetPlatforms");
+            var at = -1;
+            for (var i = 0; excluded != null && i < excluded.arraySize; i++)
+                if (excluded.GetArrayElementAtIndex(i).stringValue == "Standalone") at = i;
+
+            var ok = standalone.intValue == level && current.intValue == level && at < 0;
+            if (!fix || ok) return ok;
+
+            if (at >= 0) excluded.DeleteArrayElementAtIndex(at);
+            standalone.intValue = level;
+            current.intValue = level;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            AssetDatabase.SaveAssets();
+            return true;
         }
 
         // The pipeline assets used by quality levels that are available on Android; a level without its own asset uses the default one.
@@ -486,6 +563,21 @@ namespace StageSettAR.Editor
                 Add(asset ? asset : GraphicsSettings.defaultRenderPipeline);
             }
             if (list.Count == 0) Add(GraphicsSettings.defaultRenderPipeline);
+            return list;
+        }
+
+        // The renderers of the pipeline assets Android builds use.
+        static List<ScriptableRendererData> AndroidRenderers()
+        {
+            var list = new List<ScriptableRendererData>();
+            foreach (var asset in AndroidPipelines())
+            {
+                // Read through the serialized list: it holds every slot, not only the ones the pipeline has built.
+                var slots = new SerializedObject(asset).FindProperty("m_RendererDataList");
+                for (var i = 0; slots != null && i < slots.arraySize; i++)
+                    if (slots.GetArrayElementAtIndex(i).objectReferenceValue is ScriptableRendererData r && !list.Contains(r))
+                        list.Add(r);
+            }
             return list;
         }
 
@@ -539,6 +631,29 @@ namespace StageSettAR.Editor
             ids.GetArrayElementAtIndex(ids.arraySize - 1).longValue = localId;
             so.ApplyModifiedPropertiesWithoutUndo();
             Debug.Log($"[StageSettAR] Added {type.Name} to {data.name}", data);
+        }
+
+        // Mirrors URP's ScriptableRendererDataEditor.RemoveComponent: the feature list and local-id map entries, then the sub-asset.
+        static void RemoveFeature(ScriptableRendererData data, ScriptableRendererFeature feature)
+        {
+            var so = new SerializedObject(data);
+            var list = so.FindProperty("m_RendererFeatures");
+            var ids = so.FindProperty("m_RendererFeatureMap");
+            for (var i = 0; i < list.arraySize; i++)
+            {
+                if (list.GetArrayElementAtIndex(i).objectReferenceValue != feature) continue;
+                // An object-reference slot is only cleared by the first delete; null it so the second is not needed.
+                list.GetArrayElementAtIndex(i).objectReferenceValue = null;
+                list.DeleteArrayElementAtIndex(i);
+                if (i < ids.arraySize) ids.DeleteArrayElementAtIndex(i);
+                break;
+            }
+            so.ApplyModifiedPropertiesWithoutUndo();
+            var name = feature.GetType().Name;
+            AssetDatabase.RemoveObjectFromAsset(feature);
+            Object.DestroyImmediate(feature, true);
+            EditorUtility.SetDirty(data);
+            Debug.Log($"[StageSettAR] Removed {name} from {data.name}", data);
         }
 
         static bool GetBool(Object obj, string field)
